@@ -1,18 +1,15 @@
 import os
-import re
-import requests
-from fastapi import FastAPI
+import asyncio
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from dotenv import load_dotenv
+from google import genai
 
-load_dotenv()
+app = FastAPI(title="Weather AI API")
 
-OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-
-app = FastAPI(title="Weather AI Backend")
-
+# -------------------------
+# CORS
+# -------------------------
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -21,95 +18,136 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-class UserQuery(BaseModel):
+# -------------------------
+# Gemini API
+# -------------------------
+API_KEY = os.getenv("GEMINI_API_KEY")
+
+if not API_KEY:
+    raise RuntimeError("GEMINI_API_KEY is not configured")
+
+client = genai.Client(api_key=API_KEY)
+
+# Primary + fallback models
+MODELS = [
+    "gemini-3.7-flash",
+    "gemini-3.5-flash",
+]
+
+# -------------------------
+# Request model
+# -------------------------
+class ChatRequest(BaseModel):
     message: str
 
-def extract_city(user_msg: str) -> str:
-    ignore_list = {
-        "what", "is", "the", "weather", "wheather", "in", "right", "now", "today", "how", 
-        "kaisa", "kaise", "kesa", "kese", "hai", "mausam", "mosam", "batao", "btao", 
-        "ka", "ki", "ko", "temperature", "temp", "aaj", "kya", "kaha", "degree", 
-        "tell", "me", "about", "mai", "me", "kharab", "achha", "baaris", "barish", 
-        "dhop", "garmi", "sardi", "thand", "rain", "din", "hal", "haal", "please", "pls",
-        "like", "give", "show", "can", "you", "city", "of", "for"
-    }
-    
-    cleaned_msg = re.sub(r'[^\w\s]', '', user_msg)
-    words = cleaned_msg.split()
-    
-    for word in words:
-        if word.lower() not in ignore_list and len(word) > 2:
-            return word
-            
-    return "Delhi"
 
-def fetch_weather(city: str):
-    if not OPENWEATHER_API_KEY:
-        return None
-    try:
-        url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={OPENWEATHER_API_KEY}&units=metric"
-        res = requests.get(url, timeout=5).json()
-        if res.get("cod") == 200:
-            return {
-                "city": res["name"],
-                "temperature": res["main"]["temp"],
-                "feels_like": res["main"]["feels_like"],
-                "humidity": res["main"]["humidity"],
-                "condition": res["weather"][0]["description"],
-                "wind_speed": res["wind"]["speed"]
-            }
-    except Exception:
-        pass
-    return None
-
+# -------------------------
+# Health check
+# -------------------------
 @app.get("/")
 def home():
-    return {"status": "Backend server running!"}
+    return {
+        "status": "ok",
+        "message": "Weather AI API is running"
+    }
 
+
+@app.get("/health")
+def health():
+    return {
+        "status": "healthy"
+    }
+
+
+# -------------------------
+# Gemini function
+# -------------------------
+async def ask_gemini(message: str):
+
+    last_error = None
+
+    for model in MODELS:
+
+        for attempt in range(3):
+
+            try:
+                response = await asyncio.to_thread(
+                    client.models.generate_content,
+                    model=model,
+                    contents=message
+                )
+
+                text = response.text
+
+                if text:
+                    return {
+                        "reply": text,
+                        "model": model
+                    }
+
+                last_error = "Gemini returned an empty response"
+
+            except Exception as e:
+
+                last_error = str(e)
+
+                error_text = str(e).lower()
+
+                # Retry temporary errors
+                temporary_error = any(
+                    word in error_text
+                    for word in [
+                        "503",
+                        "unavailable",
+                        "overloaded",
+                        "temporarily",
+                        "high demand",
+                        "429",
+                        "rate limit"
+                    ]
+                )
+
+                if temporary_error and attempt < 2:
+                    await asyncio.sleep(2 * (attempt + 1))
+                    continue
+
+                break
+
+    raise RuntimeError(last_error)
+
+
+# -------------------------
+# Chat endpoint
+# -------------------------
 @app.post("/api/chat")
-def handle_chat(payload: UserQuery):
-    try:
-        user_msg = payload.message
-        city = extract_city(user_msg)
-        weather_data = fetch_weather(city)
-        
-        # If extracted city fails on OpenWeather, default to Delhi
-        if not weather_data and city != "Delhi":
-            city = "Delhi"
-            weather_data = fetch_weather("Delhi")
+async def chat(request: ChatRequest):
 
-        # FIX: Agar weather data mil gaya, toh AI key rate-limit skip karke direct 100% success response do!
-        if weather_data:
-            reply_text = f"The current temperature in {weather_data['city']} is {weather_data['temperature']}°C with {weather_data['condition']}. Humidity is {weather_data['humidity']}% and wind speed is {weather_data['wind_speed']} m/s."
-            return {
-                "reply": reply_text,
-                "weather_card": weather_data,
-                "status": "success"
-            }
-        
-        # Non-weather questions fallback to Gemini
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
-        headers = {'Content-Type': 'application/json'}
-        prompt = f"Answer this question in simple English: '{user_msg}'"
-        data = {"contents": [{"parts": [{"text": prompt}]}]}
-        
-        response = requests.post(url, headers=headers, json=data, timeout=10)
-        res_data = response.json()
-        
-        if response.status_code == 200:
-            reply_text = res_data['candidates'][0]['content']['parts'][0]['text']
-            return {
-                "reply": reply_text,
-                "weather_card": None,
-                "status": "success"
-            }
-        else:
-            return {
-                "reply": "I could not fetch an answer right now. Please try again in a few moments.",
-                "weather_card": None,
-                "status": "failed",
-                "error_detail": res_data
-            }
+    message = request.message.strip()
+
+    if not message:
+        raise HTTPException(
+            status_code=400,
+            detail="Message cannot be empty"
+        )
+
+    try:
+
+        result = await ask_gemini(message)
+
+        return {
+            "status": "success",
+            "message": result["reply"],
+            "model": result["model"]
+        }
 
     except Exception as e:
-        return {"reply": f"Error occurred: {str(e)}", "weather_card": None, "status": "failed"}
+
+        print("Gemini Error:", e)
+
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "status": "failed",
+                "message": "AI service is temporarily unavailable. Please try again."
+            }
+        )
