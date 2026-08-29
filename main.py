@@ -25,7 +25,6 @@ class UserQuery(BaseModel):
     message: str
 
 def extract_city(user_msg: str) -> str:
-    # Common words across English and Hinglish to ignore
     ignore_list = {
         "what", "is", "the", "weather", "wheather", "in", "right", "now", "today", "how", 
         "kaisa", "kaise", "kesa", "kese", "hai", "mausam", "mosam", "batao", "btao", 
@@ -35,11 +34,9 @@ def extract_city(user_msg: str) -> str:
         "like", "give", "show", "can", "you", "city", "of", "for"
     }
     
-    # Remove punctuation
     cleaned_msg = re.sub(r'[^\w\s]', '', user_msg)
     words = cleaned_msg.split()
     
-    # Check for non-stop words
     for word in words:
         if word.lower() not in ignore_list and len(word) > 2:
             return word
@@ -76,7 +73,6 @@ def handle_chat(payload: UserQuery):
         city = extract_city(user_msg)
         weather_data = fetch_weather(city)
         
-        # If extracted city fails on OpenWeather, fallback to Delhi
         if not weather_data and city != "Delhi":
             city = "Delhi"
             weather_data = fetch_weather("Delhi")
@@ -94,11 +90,9 @@ def handle_chat(payload: UserQuery):
             prompt = (
                 f"User Question: '{user_msg}'\n\n"
                 f"INSTRUCTIONS:\n"
-                f"1. Answer the user's question directly.\n"
-                f"2. Provide a helpful answer in simple, clear English."
+                f"1. Answer the user's question directly in simple, clear English."
             )
 
-        # Calling Gemini 2.5 Flash Endpoint
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
         headers = {'Content-Type': 'application/json'}
         data = {"contents": [{"parts": [{"text": prompt}]}]}
@@ -114,7 +108,6 @@ def handle_chat(payload: UserQuery):
                 "status": "success"
             }
         else:
-            # Fallback response if Gemini API key fails or rate-limits
             if weather_data:
                 return {
                     "reply": f"The current temperature in {weather_data['city']} is {weather_data['temperature']}°C with {weather_data['condition']}.",
