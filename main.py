@@ -25,23 +25,30 @@ class UserQuery(BaseModel):
     message: str
 
 def extract_city(user_msg: str) -> str:
-    stop_words = {
+    # Common words across English and Hinglish to ignore
+    ignore_list = {
         "what", "is", "the", "weather", "wheather", "in", "right", "now", "today", "how", 
         "kaisa", "kaise", "kesa", "kese", "hai", "mausam", "mosam", "batao", "btao", 
         "ka", "ki", "ko", "temperature", "temp", "aaj", "kya", "kaha", "degree", 
         "tell", "me", "about", "mai", "me", "kharab", "achha", "baaris", "barish", 
         "dhop", "garmi", "sardi", "thand", "rain", "din", "hal", "haal", "please", "pls",
-        "like", "give", "show", "can", "you", "city"
+        "like", "give", "show", "can", "you", "city", "of", "for"
     }
     
-    words = re.findall(r'\b[a-zA-Z]+\b', user_msg)
+    # Remove punctuation
+    cleaned_msg = re.sub(r'[^\w\s]', '', user_msg)
+    words = cleaned_msg.split()
+    
+    # Check for non-stop words
     for word in words:
-        if len(word) > 2 and word.lower() not in stop_words:
+        if word.lower() not in ignore_list and len(word) > 2:
             return word
             
     return "Delhi"
 
 def fetch_weather(city: str):
+    if not OPENWEATHER_API_KEY:
+        return None
     try:
         url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={OPENWEATHER_API_KEY}&units=metric"
         res = requests.get(url, timeout=5).json()
@@ -69,6 +76,11 @@ def handle_chat(payload: UserQuery):
         city = extract_city(user_msg)
         weather_data = fetch_weather(city)
         
+        # If extracted city fails on OpenWeather, fallback to Delhi
+        if not weather_data and city != "Delhi":
+            city = "Delhi"
+            weather_data = fetch_weather("Delhi")
+
         if weather_data:
             prompt = (
                 f"User Question: '{user_msg}'\n"
@@ -82,12 +94,11 @@ def handle_chat(payload: UserQuery):
             prompt = (
                 f"User Question: '{user_msg}'\n\n"
                 f"INSTRUCTIONS:\n"
-                f"1. Understand the user's question directly.\n"
-                f"2. Provide a helpful answer in simple, clear English.\n"
-                f"3. If they asked for weather, politely state that live data for '{city}' could not be fetched."
+                f"1. Answer the user's question directly.\n"
+                f"2. Provide a helpful answer in simple, clear English."
             )
 
-        # High-quota, highly stable Gemini model endpoint
+        # Calling Gemini 2.5 Flash Endpoint
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
         headers = {'Content-Type': 'application/json'}
         data = {"contents": [{"parts": [{"text": prompt}]}]}
@@ -103,11 +114,10 @@ def handle_chat(payload: UserQuery):
                 "status": "success"
             }
         else:
-            # Smart Fallback: Gemini me koi bhi error ho, OpenWeather data return karega!
+            # Fallback response if Gemini API key fails or rate-limits
             if weather_data:
-                fallback_reply = f"The weather in {weather_data['city']} is currently {weather_data['temperature']}°C with {weather_data['condition']}."
                 return {
-                    "reply": fallback_reply,
+                    "reply": f"The current temperature in {weather_data['city']} is {weather_data['temperature']}°C with {weather_data['condition']}.",
                     "weather_card": weather_data,
                     "status": "success"
                 }
