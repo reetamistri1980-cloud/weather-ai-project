@@ -1,21 +1,18 @@
-import os
 import re
 import requests
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from dotenv import load_dotenv
 
-load_dotenv()
 
-OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY")
+app = FastAPI(title="Real-Time Weather API")
 
-app = FastAPI(title="Weather AI Backend")
 
-# -----------------------------
+# ==============================
 # CORS
-# -----------------------------
+# ==============================
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -25,228 +22,405 @@ app.add_middleware(
 )
 
 
-# -----------------------------
-# Request model
-# -----------------------------
+# ==============================
+# Request Model
+# ==============================
+
 class UserQuery(BaseModel):
     message: str
 
 
-# -----------------------------
-# Detect city from user message
-# -----------------------------
-def extract_city(user_msg: str) -> str | None:
-    text = user_msg.strip()
+# ==============================
+# Extract City
+# ==============================
 
-    # Examples:
-    # weather in Delhi
-    # what is the weather in Mumbai?
-    # temperature of Pune
-    # forecast for Kolkata
+def extract_city(message: str):
+
+    message = message.strip()
+
     patterns = [
-        r"(?:weather|wheather|temperature|temp|forecast|rain|mausam|mosam)\s+(?:in|of|for|at)\s+(.+)",
-        r"(?:what\s+is|what's)\s+(?:the\s+)?(?:weather|temperature|temp)\s+(?:in|of|for|at)\s+(.+)",
-        r"(?:weather|wheather|mausam|mosam)\s+(?:of|in)\s+(.+)",
+        r"weather\s+(?:in|of|at)\s+(.+)",
+        r"wheather\s+(?:in|of|at)\s+(.+)",
+        r"temperature\s+(?:in|of|at)\s+(.+)",
+        r"temp\s+(?:in|of|at)\s+(.+)",
+        r"forecast\s+(?:in|of|for|at)\s+(.+)",
+        r"mausam\s+(?:in|of|ka)\s+(.+)",
+        r"(.+?)\s+(?:weather|wheather)$",
+        r"(.+?)\s+(?:temperature|temp)$",
     ]
 
     for pattern in patterns:
-        match = re.search(pattern, text, re.IGNORECASE)
-        if match:
-            city = match.group(1).strip()
-            city = re.sub(r"[?.!,]+$", "", city).strip()
 
-            # Remove common trailing words
+        match = re.search(
+            pattern,
+            message,
+            re.IGNORECASE
+        )
+
+        if match:
+
+            city = match.group(1).strip()
+
             city = re.sub(
-                r"\s+(?:right now|today|now|please|batao|btao|kaisa hai|kaise hai)$",
+                r"[?.!,]+$",
+                "",
+                city
+            ).strip()
+
+            city = re.sub(
+                r"\s+(today|now|right now|please|batao|btao)$",
                 "",
                 city,
-                flags=re.IGNORECASE,
+                flags=re.IGNORECASE
             ).strip()
 
             if city:
                 return city
 
-    # Handle simple queries such as:
-    # Delhi weather
-    # Mumbai temperature
-    match = re.search(
-        r"^(.+?)\s+(?:weather|wheather|temperature|temp|forecast)$",
-        text,
-        re.IGNORECASE,
-    )
-
-    if match:
-        city = match.group(1).strip()
-        if city:
-            return city
-
-    # Handle Hinglish:
-    # Delhi ka mausam
-    # Mumbai ka weather
-    match = re.search(
-        r"^(.+?)\s+(?:ka|ki|ke)\s+(?:mausam|mosam|weather)$",
-        text,
-        re.IGNORECASE,
-    )
-
-    if match:
-        city = match.group(1).strip()
-        if city:
-            return city
-
     return None
 
 
-# -----------------------------
-# Fetch REAL-TIME weather
-# -----------------------------
-def fetch_weather(city: str):
-    if not OPENWEATHER_API_KEY:
-        raise RuntimeError(
-            "OPENWEATHER_API_KEY is missing in the .env file."
-        )
+# ==============================
+# Get Weather
+# ==============================
 
-    url = "https://api.openweathermap.org/data/2.5/weather"
+def get_weather(city):
 
-    params = {
-        "q": city,
-        "appid": OPENWEATHER_API_KEY,
-        "units": "metric",
+    # Open-Meteo Geocoding
+    geo_url = "https://geocoding-api.open-meteo.com/v1/search"
+
+    geo_params = {
+        "name": city,
+        "count": 1,
+        "language": "en",
+        "format": "json"
     }
 
-    response = requests.get(
-        url,
-        params=params,
-        timeout=10,
+    geo_response = requests.get(
+        geo_url,
+        params=geo_params,
+        timeout=10
     )
 
-    # OpenWeather returns useful error messages such as 401 or 404.
-    try:
-        data = response.json()
-    except Exception:
-        data = {}
+    geo_response.raise_for_status()
 
-    if response.status_code != 200:
-        error_code = data.get("cod", response.status_code)
-        error_message = data.get(
-            "message",
-            "Unable to get weather data."
-        )
+    geo_data = geo_response.json()
 
-        if str(error_code) == "401":
-            raise RuntimeError(
-                "OpenWeather API key is invalid or not activated yet."
-            )
+    if not geo_data.get("results"):
 
-        if str(error_code) == "404":
-            raise RuntimeError(
-                f"City '{city}' was not found."
-            )
+        return None
 
-        raise RuntimeError(
-            f"OpenWeather error {error_code}: {error_message}"
-        )
+    location = geo_data["results"][0]
 
-    return {
-        "city": data.get("name", city),
-        "country": data.get("sys", {}).get("country", ""),
-        "temperature": data.get("main", {}).get("temp"),
-        "feels_like": data.get("main", {}).get("feels_like"),
-        "humidity": data.get("main", {}).get("humidity"),
-        "pressure": data.get("main", {}).get("pressure"),
-        "condition": data.get("weather", [{}])[0].get(
-            "description", "Unknown"
+    latitude = location["latitude"]
+    longitude = location["longitude"]
+
+    location_name = location.get(
+        "name",
+        city
+    )
+
+    country = location.get(
+        "country",
+        ""
+    )
+
+    timezone = location.get(
+        "timezone",
+        "auto"
+    )
+
+
+    # Real-time weather
+    weather_url = "https://api.open-meteo.com/v1/forecast"
+
+    weather_params = {
+
+        "latitude": latitude,
+
+        "longitude": longitude,
+
+        "current": (
+            "temperature_2m,"
+            "relative_humidity_2m,"
+            "apparent_temperature,"
+            "precipitation,"
+            "rain,"
+            "weather_code,"
+            "wind_speed_10m"
         ),
-        "weather_main": data.get("weather", [{}])[0].get(
-            "main", "Unknown"
-        ),
-        "wind_speed": data.get("wind", {}).get("speed"),
-        "wind_direction": data.get("wind", {}).get("deg"),
-        "visibility": data.get("visibility"),
-        "clouds": data.get("clouds", {}).get("all"),
-        "sunrise": data.get("sys", {}).get("sunrise"),
-        "sunset": data.get("sys", {}).get("sunset"),
-        "updated_at": data.get("dt"),
+
+        "timezone": timezone,
+
+        "temperature_unit": "celsius",
+
+        "wind_speed_unit": "kmh"
     }
 
 
-# -----------------------------
-# Create weather reply
-# -----------------------------
-def make_weather_reply(weather):
-    city = weather["city"]
-    country = weather["country"]
+    weather_response = requests.get(
+        weather_url,
+        params=weather_params,
+        timeout=10
+    )
 
-    location = f"{city}, {country}" if country else city
+    weather_response.raise_for_status()
+
+    weather_data = weather_response.json()
+
+    current = weather_data["current"]
+
+
+    return {
+
+        "city": location_name,
+
+        "country": country,
+
+        "temperature": current.get(
+            "temperature_2m"
+        ),
+
+        "feels_like": current.get(
+            "apparent_temperature"
+        ),
+
+        "humidity": current.get(
+            "relative_humidity_2m"
+        ),
+
+        "precipitation": current.get(
+            "precipitation"
+        ),
+
+        "rain": current.get(
+            "rain"
+        ),
+
+        "weather_code": current.get(
+            "weather_code"
+        ),
+
+        "wind_speed": current.get(
+            "wind_speed_10m"
+        ),
+
+        "time": current.get(
+            "time"
+        )
+    }
+
+
+# ==============================
+# Weather Description
+# ==============================
+
+def weather_description(code):
+
+    descriptions = {
+
+        0: "Clear sky",
+
+        1: "Mainly clear",
+
+        2: "Partly cloudy",
+
+        3: "Overcast",
+
+        45: "Fog",
+
+        48: "Fog",
+
+        51: "Light drizzle",
+
+        53: "Moderate drizzle",
+
+        55: "Dense drizzle",
+
+        61: "Slight rain",
+
+        63: "Moderate rain",
+
+        65: "Heavy rain",
+
+        71: "Slight snow",
+
+        73: "Moderate snow",
+
+        75: "Heavy snow",
+
+        80: "Rain showers",
+
+        81: "Rain showers",
+
+        82: "Heavy rain showers",
+
+        95: "Thunderstorm",
+
+        96: "Thunderstorm",
+
+        99: "Thunderstorm"
+    }
+
+    return descriptions.get(
+        code,
+        "Unknown"
+    )
+
+
+# ==============================
+# Create Reply
+# ==============================
+
+def create_reply(weather):
+
+    condition = weather_description(
+        weather["weather_code"]
+    )
+
+    location = weather["city"]
+
+    if weather["country"]:
+
+        location = (
+            f"{weather['city']}, "
+            f"{weather['country']}"
+        )
+
 
     return (
-        f"🌤️ Current weather in {location}\n\n"
-        f"🌡️ Temperature: {weather['temperature']}°C\n"
-        f"🌡️ Feels like: {weather['feels_like']}°C\n"
-        f"☁️ Condition: {weather['condition'].title()}\n"
-        f"💧 Humidity: {weather['humidity']}%\n"
-        f"💨 Wind speed: {weather['wind_speed']} m/s\n"
-        f"🧭 Wind direction: {weather['wind_direction']}°\n"
-        f"☁️ Cloud cover: {weather['clouds']}%\n"
-        f"👁️ Visibility: {weather['visibility']} m\n\n"
-        f"🔄 This data is fetched directly from the weather service."
+
+        f"🌤️ Current weather in "
+        f"{location}\n\n"
+
+        f"🌡️ Temperature: "
+        f"{weather['temperature']}°C\n"
+
+        f"🌡️ Feels like: "
+        f"{weather['feels_like']}°C\n"
+
+        f"☁️ Condition: "
+        f"{condition}\n"
+
+        f"💧 Humidity: "
+        f"{weather['humidity']}%\n"
+
+        f"🌧️ Rain: "
+        f"{weather['rain']} mm\n"
+
+        f"🌦️ Precipitation: "
+        f"{weather['precipitation']} mm\n"
+
+        f"💨 Wind speed: "
+        f"{weather['wind_speed']} km/h\n"
+
+        f"🕐 Updated: "
+        f"{weather['time']}"
     )
 
 
-# -----------------------------
+# ==============================
 # Home
-# -----------------------------
+# ==============================
+
 @app.get("/")
 def home():
+
     return {
+
         "status": "success",
-        "message": "Weather AI Backend is running!"
+
+        "message":
+        "Real-Time Weather API is running!"
     }
 
 
-# -----------------------------
-# Chat endpoint
-# -----------------------------
-@app.post("/api/chat")
-def handle_chat(payload: UserQuery):
-    user_msg = payload.message.strip()
+# ==============================
+# Chat API
+# ==============================
 
-    if not user_msg:
+@app.post("/api/chat")
+def chat(payload: UserQuery):
+
+    message = payload.message.strip()
+
+
+    if not message:
+
         return {
+
             "status": "failed",
-            "reply": "Please enter a message.",
-            "weather_card": None,
+
+            "reply":
+            "Please enter a message.",
+
+            "weather_card": None
         }
 
-    city = extract_city(user_msg)
+
+    city = extract_city(message)
+
 
     if not city:
+
         return {
+
             "status": "success",
-            "reply": (
-                "Please tell me the city you want the weather for. "
-                "For example: 'What is the weather in Delhi?'"
-            ),
-            "weather_card": None,
+
+            "reply":
+            "Please enter a city. Example: weather in Delhi",
+
+            "weather_card": None
         }
+
 
     try:
-        # IMPORTANT:
-        # Weather requests DO NOT call Gemini.
-        # This avoids the Gemini 429 quota error.
-        weather_data = fetch_weather(city)
+
+        weather = get_weather(city)
+
+
+        if weather is None:
+
+            return {
+
+                "status": "success",
+
+                "reply":
+                f"I could not find weather for {city}.",
+
+                "weather_card": None
+            }
+
 
         return {
+
             "status": "success",
-            "reply": make_weather_reply(weather_data),
-            "weather_card": weather_data,
+
+            "reply":
+            create_reply(weather),
+
+            "weather_card":
+            weather
         }
 
-    except Exception as e:
-        print("Weather Error:", e)
+
+    except Exception as error:
+
+        print(
+            "WEATHER ERROR:",
+            error
+        )
+
 
         return {
+
             "status": "failed",
-            "reply": f"❌ {str(e)}",
+
+            "reply":
+            "Unable to get live weather right now.",
+
             "weather_card": None,
+
+            "error":
+            str(error)
         }
