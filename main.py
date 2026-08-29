@@ -74,21 +74,20 @@ def handle_chat(payload: UserQuery):
                 f"User Question: '{user_msg}'\n"
                 f"LIVE WEATHER DATA FOR {city}: {weather_data}\n\n"
                 f"INSTRUCTIONS:\n"
-                f"1. Understand the user's question, even if it uses casual, imperfect, or broken English.\n"
-                f"2. Summarize the live weather details accurately based on the provided data.\n"
-                f"3. Respond ONLY in simple, clear, and easy-to-understand English.\n"
-                f"4. Do NOT mention lacking real-time data."
+                f"1. Summarize the live weather details accurately based on the provided data.\n"
+                f"2. Respond ONLY in simple, clear, and easy-to-understand English.\n"
+                f"3. Do NOT say you lack real-time data."
             )
         else:
             prompt = (
                 f"User Question: '{user_msg}'\n\n"
                 f"INSTRUCTIONS:\n"
-                f"1. Understand the user's intent regardless of English phrasing.\n"
+                f"1. Understand the user's question directly.\n"
                 f"2. Provide a helpful answer in simple, clear English.\n"
                 f"3. If they asked for weather, politely state that live data for '{city}' could not be fetched."
             )
 
-        # High-quota stable model endpoint (gemini-2.5-flash)
+        # High-quota, highly stable Gemini model endpoint
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
         headers = {'Content-Type': 'application/json'}
         data = {"contents": [{"parts": [{"text": prompt}]}]}
@@ -104,9 +103,9 @@ def handle_chat(payload: UserQuery):
                 "status": "success"
             }
         else:
-            # Smart Fallback: Gemini Quota Exceed hone par bhi weather data show karega!
+            # Smart Fallback: Gemini me koi bhi error ho, OpenWeather data return karega!
             if weather_data:
-                fallback_reply = f"The current temperature in {weather_data['city']} is {weather_data['temperature']}°C with {weather_data['condition']}."
+                fallback_reply = f"The weather in {weather_data['city']} is currently {weather_data['temperature']}°C with {weather_data['condition']}."
                 return {
                     "reply": fallback_reply,
                     "weather_card": weather_data,
