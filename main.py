@@ -1,4 +1,5 @@
 import os
+import re
 import requests
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,10 +24,28 @@ app.add_middleware(
 class UserQuery(BaseModel):
     message: str
 
+def extract_city(user_msg: str) -> str:
+    # Filter out common filler words across English, Hindi, and Hinglish
+    stop_words = {
+        "what", "is", "the", "weather", "wheather", "in", "right", "now", "today", "how", 
+        "kaisa", "kaise", "kesa", "kese", "hai", "mausam", "mosam", "batao", "btao", 
+        "ka", "ki", "ko", "temperature", "temp", "aaj", "kya", "kaha", "degree", 
+        "tell", "me", "about", "mai", "me", "kharab", "achha", "baaris", "barish", 
+        "dhop", "garmi", "sardi", "thand", "rain", "din", "kaisa", "hal", "haal"
+    }
+    
+    # Extract capital/alphabetic words
+    words = re.findall(r'\b[a-zA-Z]+\b', user_msg)
+    for word in words:
+        if len(word) > 2 and word.lower() not in stop_words:
+            return word
+            
+    return "Delhi"
+
 def fetch_weather(city: str):
     try:
         url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={OPENWEATHER_API_KEY}&units=metric"
-        res = requests.get(url).json()
+        res = requests.get(url, timeout=5).json()
         if res.get("cod") == 200:
             return {
                 "city": res["name"],
@@ -40,23 +59,6 @@ def fetch_weather(city: str):
         pass
     return None
 
-def extract_city_with_gemini(user_msg: str) -> str:
-    """Uses Gemini to reliably extract the city name from any language or phrasing."""
-    try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={GEMINI_API_KEY}"
-        headers = {'Content-Type': 'application/json'}
-        prompt = (
-            f"Extract only the target city name from this user query: '{user_msg}'. "
-            f"If no specific city is mentioned, reply with 'Delhi'. "
-            f"Return ONLY the city name in English, nothing else."
-        )
-        data = {"contents": [{"parts": [{"text": prompt}]}]}
-        res = requests.post(url, headers=headers, json=data).json()
-        extracted = res['candidates'][0]['content']['parts'][0]['text'].strip()
-        return extracted if extracted else "Delhi"
-    except Exception:
-        return "Delhi"
-
 @app.get("/")
 def home():
     return {"status": "Backend server running!"}
@@ -65,25 +67,23 @@ def home():
 def handle_chat(payload: UserQuery):
     try:
         user_msg = payload.message
-        
-        # Smart City Extraction using AI
-        city = extract_city_with_gemini(user_msg)
+        city = extract_city(user_msg)
         weather_data = fetch_weather(city)
         
         if weather_data:
             prompt = (
-                f"User Query: '{user_msg}'\n"
-                f"Real-time Live Weather Data for {city}: {weather_data}\n\n"
-                f"INSTRUCTION:\n"
-                f"1. You HAVE real-time live data provided above. Answer the user's question directly using this data.\n"
-                f"2. Detect the language/script of the user query (English, Hindi, or Hinglish).\n"
-                f"3. Respond ONLY in that EXACT SAME language/style (e.g. if Hinglish, answer in Hinglish)."
+                f"User Asked: '{user_msg}'\n"
+                f"FETCHED WEATHER DATA FOR {city}: {weather_data}\n\n"
+                f"INSTRUCTIONS:\n"
+                f"1. You have official real-time weather data provided above. Answer the user's question directly using this data.\n"
+                f"2. Match the user's language EXACTLY: if English, reply in English; if Hindi (Devanagari), reply in Hindi; if Hinglish (Roman script Hindi), reply in Hinglish.\n"
+                f"3. Do NOT say you cannot access live data."
             )
         else:
             prompt = (
-                f"User Query: '{user_msg}'\n\n"
-                f"INSTRUCTION:\n"
-                f"1. Explain politely that you couldn't fetch live weather details for '{city}' at this moment.\n"
+                f"User Asked: '{user_msg}'\n\n"
+                f"INSTRUCTIONS:\n"
+                f"1. Tell the user that weather details for '{city}' could not be fetched right now.\n"
                 f"2. Respond in the exact same language (English, Hindi, or Hinglish)."
             )
 
@@ -95,7 +95,7 @@ def handle_chat(payload: UserQuery):
             }]
         }
         
-        response = requests.post(url, headers=headers, json=data)
+        response = requests.post(url, headers=headers, json=data, timeout=10)
         res_data = response.json()
         
         if response.status_code == 200:
