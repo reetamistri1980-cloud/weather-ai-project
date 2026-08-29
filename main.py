@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-app = FastAPI(title="Weather AI Chatbot")
+app = FastAPI(title="Smart AI Weather & General Chatbot")
 
 # ==============================
 # CORS SETUP
@@ -17,30 +17,43 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ==============================
-# REQUEST MODEL
-# ==============================
 class UserQuery(BaseModel):
     message: str
 
 # ==============================
-# INTENT & LOCATION EXTRACTION
+# WIKIPEDIA / GENERAL KNOWLEDGE FETCH
 # ==============================
-def detect_intent_and_location(message: str):
+def get_general_knowledge(query: str):
+    try:
+        url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{query.strip().replace(' ', '_')}"
+        res = requests.get(url, timeout=5)
+        if res.status_code == 200:
+            data = res.json()
+            if "extract" in data and data["extract"]:
+                return data["extract"]
+    except Exception:
+        pass
+    return None
+
+# ==============================
+# INTENT & LOCATION DETECTOR
+# ==============================
+def detect_intent(message: str):
     msg_lower = message.strip().lower()
     
-    # Weather Intent Patterns
-    weather_keywords = ["weather", "wheather", "temp", "temperature", "mausam", "mosam", "rain", "forecast", "barish"]
-    is_weather_query = any(keyword in msg_lower for keyword in weather_keywords)
-    
-    # General Chat Intents
-    if any(greet in msg_lower for greet in ["hi", "hello", "hey", "hlo", "namaste", "salam"]):
+    # Greetings
+    if any(greet in msg_lower for greet in ["hi", "hello", "hey", "hlo", "namaste"]):
         return "greeting", None
         
-    if any(q in msg_lower for q in ["who are you", "kaun ho", "what can you do", "help", "kya kar sakte ho"]):
+    # Identity
+    if any(q in msg_lower for q in ["who are you", "kaun ho", "what can you do", "help"]):
         return "identity", None
 
-    # Extract Location for Weather
+    # Weather Keywords Check
+    weather_keywords = ["weather", "wheather", "temp", "temperature", "mausam", "mosam", "rain", "forecast", "barish", "humidity", "wind"]
+    is_weather_query = any(k in msg_lower for k in weather_keywords)
+
+    # Extract Location Regex
     patterns = [
         r"weather\s+(?:in|of|at)\s+(.+)",
         r"wheather\s+(?:in|of|at)\s+(.+)",
@@ -61,17 +74,20 @@ def detect_intent_and_location(message: str):
                 return "weather", city
 
     if is_weather_query:
-        # If user asks "weather" without city, default to Delhi
         return "weather", "Delhi"
 
-    return "general_chat", None
+    # General Knowledge Query (e.g., Photosynthesis)
+    clean_query = re.sub(r"^(what is|what are|tell me about|explain|define)\s+", "", msg_lower, flags=re.IGNORECASE)
+    clean_query = re.sub(r"[?.!,]+$", "", clean_query).strip()
+    
+    return "gk", clean_query
 
 # ==============================
-# OPEN-METEO WEATHER FETCHING
+# ACCURATE WEATHER FETCH
 # ==============================
 def get_weather(city: str):
     geo_url = "https://geocoding-api.open-meteo.com/v1/search"
-    geo_params = {"name": city, "count": 1, "language": "en", "format": "json"}
+    geo_params = {"name": city, "count": 5, "language": "en", "format": "json"}
 
     geo_response = requests.get(geo_url, params=geo_params, timeout=10)
     geo_response.raise_for_status()
@@ -80,7 +96,15 @@ def get_weather(city: str):
     if not geo_data.get("results"):
         return None
 
-    location = geo_data["results"][0]
+    results = geo_data["results"]
+    location = results[0]
+
+    # Specific fix for "Bengal" or Indian regions preference
+    for res in results:
+        if "bengal" in city.lower() and res.get("country_code") == "IN":
+            location = res
+            break
+
     latitude = location["latitude"]
     longitude = location["longitude"]
     location_name = location.get("name", city)
@@ -127,7 +151,7 @@ def weather_description(code: int) -> str:
         45: "Foggy 🌫️", 48: "Depositing rime fog 🌫️", 51: "Light drizzle 🌦️",
         53: "Moderate drizzle 🌦️", 55: "Dense drizzle 🌧️", 61: "Slight rain 🌧️",
         63: "Moderate rain 🌧️", 65: "Heavy rain 🌧️", 71: "Slight snow 🌨️",
-        75: "Heavy snow ❄️", 80: "Rain showers 🌦️", 95: "Thunderstorm 🌩️"
+        80: "Rain showers 🌦️", 95: "Thunderstorm 🌩️"
     }
     return descriptions.get(code, "Clear/Partly Cloudy")
 
@@ -145,7 +169,7 @@ def create_weather_report(weather: dict) -> str:
     full_location = ", ".join(location_parts)
 
     return (
-        f"🤖 **Weather Assistant Bot**\n\n"
+        f"🤖 **Weather Assistant**\n\n"
         f"📍 **Location:** {full_location}\n"
         f"────────────────────────\n"
         f"🌡️ **Temperature:** {weather['temperature']}°C (Feels like {weather['feels_like']}°C)\n"
@@ -157,65 +181,51 @@ def create_weather_report(weather: dict) -> str:
     )
 
 # ==============================
-# ENDPOINTS
+# CHAT ENDPOINT
 # ==============================
 @app.get("/")
 def home():
-    return {"status": "success", "message": "Weather AI Chatbot API is online!"}
+    return {"status": "success", "message": "Smart AI Chatbot API is running!"}
 
 @app.post("/api/chat")
 def chat(payload: UserQuery):
     user_msg = payload.message.strip()
 
     if not user_msg:
-        return {
-            "status": "failed",
-            "reply": "Hey there! Please type a message or ask for a city's weather.",
-            "weather_card": None
-        }
+        return {"status": "failed", "reply": "Please enter a message.", "weather_card": None}
 
-    intent, location = detect_intent_and_location(user_msg)
+    intent, data = detect_intent(user_msg)
 
-    # Chatbot Logic Responses
     if intent == "greeting":
         return {
             "status": "success",
-            "reply": "Hello! 👋 I am your Weather AI Assistant. Ask me about the weather in any city, district, or country! (e.g., 'weather in Delhi')",
+            "reply": "Hello! 👋 I am your Smart AI Assistant. Ask me about weather in any location or general science/knowledge questions!",
             "weather_card": None
         }
 
     if intent == "identity":
         return {
             "status": "success",
-            "reply": "I am a Real-Time Weather Chatbot! 🤖 I can provide live temperature, humidity, wind speed, and rain reports for any location worldwide.",
+            "reply": "I am an AI Chatbot! 🤖 I provide live weather reports and answer general questions.",
             "weather_card": None
         }
 
-    if intent == "weather" or location:
+    if intent == "weather":
         try:
-            weather = get_weather(location or "Delhi")
+            weather = get_weather(data)
             if weather is None:
-                return {
-                    "status": "success",
-                    "reply": f"Sorry, I couldn't find weather details for '{location}'. Please check the city name and try again!",
-                    "weather_card": None
-                }
-            return {
-                "status": "success",
-                "reply": create_weather_report(weather),
-                "weather_card": weather
-            }
+                return {"status": "success", "reply": f"Could not find weather for '{data}'.", "weather_card": None}
+            return {"status": "success", "reply": create_weather_report(weather), "weather_card": weather}
         except Exception as err:
-            return {
-                "status": "failed",
-                "reply": "I ran into an issue fetching the live weather right now. Please try again in a few seconds.",
-                "weather_card": None,
-                "error": str(err)
-            }
+            return {"status": "failed", "reply": "Unable to fetch live weather.", "weather_card": None, "error": str(err)}
 
-    # Fallback response for unhandled inputs
+    if intent == "gk":
+        answer = get_general_knowledge(data)
+        if answer:
+            return {"status": "success", "reply": f"🤖 **Answer:**\n\n{answer}", "weather_card": None}
+
     return {
         "status": "success",
-        "reply": f"I am optimized for weather reporting! Try asking me: 'Weather in {user_msg}' or 'How is the weather in Mumbai?'",
+        "reply": f"I couldn't find an exact answer for '{user_msg}'. Try asking 'weather in West Bengal' or 'what is photosynthesis'.",
         "weather_card": None
     }
