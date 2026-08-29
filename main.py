@@ -49,12 +49,12 @@ def handle_chat(payload: UserQuery):
     try:
         user_msg = payload.message
         
-        # City Extraction Logic with Typo Handling
+        # Simple City Extraction
         city = "Delhi"
         stop_words = [
             "what", "is", "the", "weather", "wheather", "in", "right", "now", "today", "how", 
             "kaisa", "hai", "mausam", "batao", "ka", "ki", "ko", "temperature",
-            "aaj", "kya", "kaha", "degree"
+            "aaj", "kya", "kaha", "degree", "tell", "me", "about"
         ]
         
         for word in user_msg.split():
@@ -69,14 +69,17 @@ def handle_chat(payload: UserQuery):
             prompt = (
                 f"User Asked: '{user_msg}'\n"
                 f"Live Weather Data for {city}: {weather_data}\n\n"
-                f"INSTRUCTION: Summarize the weather details naturally and helpfully. "
-                f"CRITICAL: Detect the language of the user's message ('{user_msg}') and respond in that EXACT SAME LANGUAGE."
+                f"INSTRUCTION:\n"
+                f"1. Summarize the live weather details accurately and naturally.\n"
+                f"2. Detect whether the user asked in English, Hindi (Devanagari script), or Hinglish (Hindi written in Roman script).\n"
+                f"3. Respond ONLY in that same language (English, Hindi, or Hinglish)."
             )
         else:
             prompt = (
                 f"User Message: '{user_msg}'\n\n"
-                f"INSTRUCTION: Tell the user that live weather data for '{city}' could not be found. "
-                f"Respond in the EXACT SAME LANGUAGE as the user's input."
+                f"INSTRUCTION:\n"
+                f"1. Politely inform the user that weather data for '{city}' could not be found.\n"
+                f"2. Respond ONLY in the same language as the user input (English, Hindi, or Hinglish)."
             )
 
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={GEMINI_API_KEY}"
