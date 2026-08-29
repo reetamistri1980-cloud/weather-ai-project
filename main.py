@@ -25,6 +25,7 @@ class UserQuery(BaseModel):
 
 def fetch_weather(city: str):
     try:
+        # OpenWeather API URL (Restored)
         url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={OPENWEATHER_API_KEY}&units=metric"
         res = requests.get(url).json()
         if res.get("cod") == 200:
@@ -80,7 +81,8 @@ def handle_chat(payload: UserQuery):
                 f"CRITICAL: Respond in the EXACT SAME LANGUAGE as the user's input."
             )
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
+        # Gemini API URL (Updated to gemini-3.6-flash)
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={GEMINI_API_KEY}"
         headers = {'Content-Type': 'application/json'}
         data = {
             "contents": [{
