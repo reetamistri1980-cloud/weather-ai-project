@@ -25,7 +25,6 @@ class UserQuery(BaseModel):
 
 def fetch_weather(city: str):
     try:
-        # OpenWeather API URL (Restored)
         url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={OPENWEATHER_API_KEY}&units=metric"
         res = requests.get(url).json()
         if res.get("cod") == 200:
@@ -50,12 +49,12 @@ def handle_chat(payload: UserQuery):
     try:
         user_msg = payload.message
         
-        # City Extraction Logic
+        # City Extraction Logic with Typo Handling
         city = "Delhi"
         stop_words = [
-            "what", "is", "the", "weather", "in", "right", "now", "today", "how", 
-            "kaisa", "kaisa", "hai", "mausam", "batao", "ka", "ki", "ko", "temperature",
-            "aaj", "kya", "kaha", "koli", "degree"
+            "what", "is", "the", "weather", "wheather", "in", "right", "now", "today", "how", 
+            "kaisa", "hai", "mausam", "batao", "ka", "ki", "ko", "temperature",
+            "aaj", "kya", "kaha", "degree"
         ]
         
         for word in user_msg.split():
@@ -71,17 +70,15 @@ def handle_chat(payload: UserQuery):
                 f"User Asked: '{user_msg}'\n"
                 f"Live Weather Data for {city}: {weather_data}\n\n"
                 f"INSTRUCTION: Summarize the weather details naturally and helpfully. "
-                f"CRITICAL: Detect the language of the user's message ('{user_msg}') and respond in that EXACT SAME LANGUAGE "
-                f"(e.g., English, Hindi, Bengali, Marathi, Punjabi, Gujarati, etc.)."
+                f"CRITICAL: Detect the language of the user's message ('{user_msg}') and respond in that EXACT SAME LANGUAGE."
             )
         else:
             prompt = (
                 f"User Message: '{user_msg}'\n\n"
-                f"INSTRUCTION: Answer the user's query directly and helpfully. "
-                f"CRITICAL: Respond in the EXACT SAME LANGUAGE as the user's input."
+                f"INSTRUCTION: Tell the user that live weather data for '{city}' could not be found. "
+                f"Respond in the EXACT SAME LANGUAGE as the user's input."
             )
 
-        # Gemini API URL (Updated to gemini-3.6-flash)
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={GEMINI_API_KEY}"
         headers = {'Content-Type': 'application/json'}
         data = {
