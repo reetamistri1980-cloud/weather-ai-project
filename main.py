@@ -17,40 +17,32 @@ app.add_middleware(
 class UserQuery(BaseModel):
     message: str
 
-# Custom predefined coordinates for popular local landmarks
+# Local Landmark Coordinates Mapping
 LANDMARK_COORDS = {
-    "connaught place": {"name": "Connaught Place, New Delhi", "lat": 28.6315, "lon": 77.2167},
-    "cp": {"name": "Connaught Place, New Delhi", "lat": 28.6315, "lon": 77.2167},
-    "chandni chowk": {"name": "Chandni Chowk, Delhi", "lat": 28.6506, "lon": 77.2303},
-    "rohini": {"name": "Rohini, Delhi", "lat": 28.7041, "lon": 77.1025},
-    "dwarka": {"name": "Dwarka, Delhi", "lat": 28.5921, "lon": 77.0460},
+    "connaught place": {"name": "Connaught Place, New Delhi, Delhi, India", "lat": 28.6315, "lon": 77.2167},
+    "cp": {"name": "Connaught Place, New Delhi, Delhi, India", "lat": 28.6315, "lon": 77.2167},
+    "chandni chowk": {"name": "Chandni Chowk, Central Delhi, Delhi, India", "lat": 28.6506, "lon": 77.2303},
+    "rohini": {"name": "Rohini, North West Delhi, Delhi, India", "lat": 28.7041, "lon": 77.1025},
+    "dwarka": {"name": "Dwarka, South West Delhi, Delhi, India", "lat": 28.5921, "lon": 77.0460},
 }
 
 def extract_location(text: str) -> str:
-    msg_clean = text.strip().lower()
+    msg = text.strip().lower()
 
-    # 1. Direct Landmark Check (CP, Rohini, Dwarka, etc.)
+    # Check for direct local landmark first
     for landmark in LANDMARK_COORDS:
-        if re.search(r'\b' + re.escape(landmark) + r'\b', msg_clean):
+        if re.search(r'\b' + re.escape(landmark) + r'\b', msg):
             return landmark
 
-    # 2. Extract location after keywords like 'in', 'of', 'at', 'near', 'for'
-    patterns = [
-        r"(?:weather|wheather|wether|temp|mausam|farming|fasal|humidity)\s+(?:in|of|at|near|for)\s+(.+)",
-        r"(.+?)\s+(?:weather|wheather|wether|temp|mausam|farming|fasal)$"
-    ]
+    # Extract location after prepositions (in, of, at, near, for)
+    match = re.search(r"(?:weather|wheather|wether|temp|mausam|farming|fasal|detail|details)\s+(?:in|of|at|near|for)\s+(.+)", msg, re.IGNORECASE)
+    if match:
+        loc = match.group(1).strip()
+        loc = re.sub(r"[?.!,]+$", "", loc).strip()
+        return loc
 
-    for pattern in patterns:
-        match = re.search(pattern, msg_clean)
-        if match:
-            extracted = match.group(1).strip()
-            # Clean trailing punctuation
-            extracted = re.sub(r"[?.!,]+$", "", extracted).strip()
-            if extracted:
-                return extracted
-
-    # 3. Clean fallback word removal if user enters just a city name
-    cleaned = re.sub(r"\b(weather|wheather|wether|temp|mausam|farming|fasal|detail|details|info)\b", "", msg_clean).strip()
+    # Remove generic keywords to leave location string
+    cleaned = re.sub(r"\b(weather|wheather|wether|temp|mausam|farming|fasal|detail|details|info|show|give|me)\b", "", msg, flags=re.IGNORECASE).strip()
     return cleaned if cleaned else "Delhi"
 
 def get_location_coordinates(location_name: str):
@@ -66,7 +58,23 @@ def get_location_coordinates(location_name: str):
         res = requests.get(geo_url, params=geo_params, timeout=8).json()
         if res.get("results"):
             loc = res["results"][0]
-            display_name = f"{loc.get('name', location_name)}, {loc.get('admin1', '')} ({loc.get('country', '')})"
+            
+            # Extract City/Area, District, State, and Country details
+            name = loc.get("name", "")
+            district = loc.get("admin2", "")
+            state = loc.get("admin1", "")
+            country = loc.get("country", "")
+
+            # Build detailed hierarchy string
+            parts = [p for p in [name, district, state, country] if p and p.lower() not in [x.lower() for x in [name] if x != p]]
+            # Deduplicate location hierarchy elements
+            unique_parts = []
+            for item in parts:
+                if item not in unique_parts:
+                    unique_parts.append(item)
+            
+            display_name = ", ".join(unique_parts)
+
             return {
                 "name": display_name,
                 "lat": loc["latitude"],
@@ -100,10 +108,8 @@ def fetch_agri_and_local_weather(lat: float, lon: float):
         "humidity": current.get("relative_humidity_2m"),
         "rain": current.get("rain"),
         "wind": current.get("wind_speed_10m"),
-        "weather_code": current.get("weather_code"),
         "soil_temp": soil_temp,
         "soil_moisture": soil_moisture,
-        "time": current.get("time")
     }
 
 def generate_report(loc_name: str, data: dict) -> str:
