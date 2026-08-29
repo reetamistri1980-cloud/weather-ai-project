@@ -49,14 +49,15 @@ def handle_chat(payload: UserQuery):
     try:
         user_msg = payload.message
         
-        # Simple City Extraction
-        city = "Delhi"
+        # Comprehensive Stop Words list (English, Hindi, Hinglish)
         stop_words = [
             "what", "is", "the", "weather", "wheather", "in", "right", "now", "today", "how", 
             "kaisa", "hai", "mausam", "batao", "ka", "ki", "ko", "temperature",
-            "aaj", "kya", "kaha", "degree", "tell", "me", "about"
+            "aaj", "kya", "kaha", "degree", "tell", "me", "about", "mai", "me", "kharab",
+            "achha", "baaris", "barish", "dhop", "garmi", "sardi", "thand", "rain"
         ]
         
+        city = "Delhi"
         for word in user_msg.split():
             clean_word = "".join(filter(str.isalpha, word))
             if len(clean_word) > 2 and clean_word.lower() not in stop_words:
@@ -70,15 +71,15 @@ def handle_chat(payload: UserQuery):
                 f"User Asked: '{user_msg}'\n"
                 f"Live Weather Data for {city}: {weather_data}\n\n"
                 f"INSTRUCTION:\n"
-                f"1. Summarize the live weather details accurately and naturally.\n"
-                f"2. Detect whether the user asked in English, Hindi (Devanagari script), or Hinglish (Hindi written in Roman script).\n"
+                f"1. Summarize the live weather details accurately and naturally to answer the user's specific question.\n"
+                f"2. Detect whether the user asked in English, Hindi (Devanagari), or Hinglish (Roman script).\n"
                 f"3. Respond ONLY in that same language (English, Hindi, or Hinglish)."
             )
         else:
             prompt = (
                 f"User Message: '{user_msg}'\n\n"
                 f"INSTRUCTION:\n"
-                f"1. Politely inform the user that weather data for '{city}' could not be found.\n"
+                f"1. Politely inform the user that weather data for '{city}' could not be retrieved.\n"
                 f"2. Respond ONLY in the same language as the user input (English, Hindi, or Hinglish)."
             )
 
