@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-app = FastAPI(title="Hyper-Local & Farming Weather AI Chatbot")
+app = FastAPI(title="Hyper-Local & Agricultural Weather AI Chatbot")
 
 app.add_middleware(
     CORSMiddleware,
@@ -17,7 +17,7 @@ app.add_middleware(
 class UserQuery(BaseModel):
     message: str
 
-# Local Landmark / Region to Coordinate Mapping (Hyper-Local Fix)
+# Custom predefined coordinates for popular local landmarks
 LANDMARK_COORDS = {
     "connaught place": {"name": "Connaught Place, New Delhi", "lat": 28.6315, "lon": 77.2167},
     "cp": {"name": "Connaught Place, New Delhi", "lat": 28.6315, "lon": 77.2167},
@@ -26,14 +26,39 @@ LANDMARK_COORDS = {
     "dwarka": {"name": "Dwarka, Delhi", "lat": 28.5921, "lon": 77.0460},
 }
 
+def extract_location(text: str) -> str:
+    msg_clean = text.strip().lower()
+
+    # 1. Direct Landmark Check (CP, Rohini, Dwarka, etc.)
+    for landmark in LANDMARK_COORDS:
+        if re.search(r'\b' + re.escape(landmark) + r'\b', msg_clean):
+            return landmark
+
+    # 2. Extract location after keywords like 'in', 'of', 'at', 'near', 'for'
+    patterns = [
+        r"(?:weather|wheather|wether|temp|mausam|farming|fasal|humidity)\s+(?:in|of|at|near|for)\s+(.+)",
+        r"(.+?)\s+(?:weather|wheather|wether|temp|mausam|farming|fasal)$"
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, msg_clean)
+        if match:
+            extracted = match.group(1).strip()
+            # Clean trailing punctuation
+            extracted = re.sub(r"[?.!,]+$", "", extracted).strip()
+            if extracted:
+                return extracted
+
+    # 3. Clean fallback word removal if user enters just a city name
+    cleaned = re.sub(r"\b(weather|wheather|wether|temp|mausam|farming|fasal|detail|details|info)\b", "", msg_clean).strip()
+    return cleaned if cleaned else "Delhi"
+
 def get_location_coordinates(location_name: str):
     loc_lower = location_name.lower().strip()
     
-    # 1. Check local landmarks list
     if loc_lower in LANDMARK_COORDS:
         return LANDMARK_COORDS[loc_lower]
 
-    # 2. Search Open-Meteo Geocoding
     geo_url = "https://geocoding-api.open-meteo.com/v1/search"
     geo_params = {"name": location_name, "count": 1, "language": "en", "format": "json"}
 
@@ -82,9 +107,8 @@ def fetch_agri_and_local_weather(lat: float, lon: float):
     }
 
 def generate_report(loc_name: str, data: dict) -> str:
-    # Farming suitability advice based on humidity & soil moisture
-    humidity = data["humidity"] or 0
-    moisture = data["soil_moisture"] or 0
+    humidity = data["humidity"] if data["humidity"] is not None else 0
+    moisture = data["soil_moisture"] if data["soil_moisture"] is not None else 0
     
     if humidity > 60 and moisture > 0.2:
         farming_advice = "🌱 **Farming Suggestion:** Soil moisture and humidity are optimal for sowing and irrigation!"
@@ -117,22 +141,9 @@ def chat(payload: UserQuery):
     if not msg:
         return {"status": "failed", "reply": "Please send a message."}
 
-    # Extract location name (Default: Connaught Place if "cp" mentioned, or location after "in/at")
-    loc_match = re.search(r"(?:weather|temp|mausam|farming|fasal)\s+(?:in|of|at|near)\s+(.+)", msg, re.IGNORECASE)
-    
-    if loc_match:
-        target_loc = loc_match.group(1).strip()
-    elif "cp" in msg.lower() or "connaught place" in msg.lower():
-        target_loc = "cp"
-    elif any(k in msg.lower() for k in ["weather", "mausam", "temp", "humidity", "fasal"]):
-        target_loc = "Delhi"
-    else:
-        return {
-            "status": "success",
-            "reply": f"Ask me about weather or farming data for any specific area! Example: 'weather in CP' or 'farming data in Rohini'."
-        }
-
+    target_loc = extract_location(msg)
     coords = get_location_coordinates(target_loc)
+
     if not coords:
         return {"status": "failed", "reply": f"Could not find coordinates for '{target_loc}'."}
 
