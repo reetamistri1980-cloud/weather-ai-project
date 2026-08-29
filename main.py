@@ -1,4 +1,5 @@
 import os
+import re
 import requests
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,9 +24,24 @@ app.add_middleware(
 class UserQuery(BaseModel):
     message: str
 
+def extract_city(user_msg: str) -> str:
+    stop_words = {
+        "what", "is", "the", "weather", "wheather", "in", "right", "now", "today", "how", 
+        "kaisa", "kaise", "kesa", "kese", "hai", "mausam", "mosam", "batao", "btao", 
+        "ka", "ki", "ko", "temperature", "temp", "aaj", "kya", "kaha", "degree", 
+        "tell", "me", "about", "mai", "me", "kharab", "achha", "baaris", "barish", 
+        "dhop", "garmi", "sardi", "thand", "rain", "din", "hal", "haal", "please", "pls",
+        "like", "give", "show", "can", "you", "city"
+    }
+    
+    words = re.findall(r'\b[a-zA-Z]+\b', user_msg)
+    for word in words:
+        if len(word) > 2 and word.lower() not in stop_words:
+            return word
+            
+    return "Delhi"
+
 def fetch_weather(city: str):
-    if not city or city.lower() == "none":
-        return None
     try:
         url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={OPENWEATHER_API_KEY}&units=metric"
         res = requests.get(url, timeout=5).json()
@@ -42,24 +58,6 @@ def fetch_weather(city: str):
         pass
     return None
 
-def extract_city_smart(user_msg: str) -> str:
-    """Uses Gemini to identify if a city is mentioned in ANY sentence format."""
-    try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={GEMINI_API_KEY}"
-        headers = {'Content-Type': 'application/json'}
-        prompt = (
-            f"Analyze this query: '{user_msg}'. "
-            f"If the user is asking about weather in a specific city, return ONLY that city name in English. "
-            f"If no city is explicitly named but they ask about weather, return 'Delhi'. "
-            f"If the query is NOT about weather, return 'NONE'. Do not include punctuation or extra words."
-        )
-        data = {"contents": [{"parts": [{"text": prompt}]}]}
-        res = requests.post(url, headers=headers, json=data, timeout=5).json()
-        city = res['candidates'][0]['content']['parts'][0]['text'].strip()
-        return city
-    except Exception:
-        return "Delhi"
-
 @app.get("/")
 def home():
     return {"status": "Backend server running!"}
@@ -68,29 +66,30 @@ def home():
 def handle_chat(payload: UserQuery):
     try:
         user_msg = payload.message
-        city = extract_city_smart(user_msg)
+        city = extract_city(user_msg)
+        weather_data = fetch_weather(city)
         
-        weather_data = None
-        if city != "NONE":
-            weather_data = fetch_weather(city)
-
         if weather_data:
             prompt = (
                 f"User Question: '{user_msg}'\n"
                 f"LIVE WEATHER DATA FOR {city}: {weather_data}\n\n"
                 f"INSTRUCTIONS:\n"
-                f"1. Answer the user's question accurately using the live weather data provided.\n"
-                f"2. Keep the response clear, natural, and simple in English."
+                f"1. Understand the user's question, even if it uses casual, imperfect, or broken English.\n"
+                f"2. Summarize the live weather details accurately based on the provided data.\n"
+                f"3. Respond ONLY in simple, clear, and easy-to-understand English.\n"
+                f"4. Do NOT mention lacking real-time data."
             )
         else:
             prompt = (
                 f"User Question: '{user_msg}'\n\n"
                 f"INSTRUCTIONS:\n"
-                f"1. Answer the user's question directly and helpfully.\n"
-                f"2. Keep the response in clear, simple English."
+                f"1. Understand the user's intent regardless of English phrasing.\n"
+                f"2. Provide a helpful answer in simple, clear English.\n"
+                f"3. If they asked for weather, politely state that live data for '{city}' could not be fetched."
             )
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={GEMINI_API_KEY}"
+        # Using gemini-1.5-flash for free tier quota stability
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
         headers = {'Content-Type': 'application/json'}
         data = {"contents": [{"parts": [{"text": prompt}]}]}
         
