@@ -40,6 +40,23 @@ def fetch_weather(city: str):
         pass
     return None
 
+def extract_city_with_gemini(user_msg: str) -> str:
+    """Uses Gemini to reliably extract the city name from any language or phrasing."""
+    try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={GEMINI_API_KEY}"
+        headers = {'Content-Type': 'application/json'}
+        prompt = (
+            f"Extract only the target city name from this user query: '{user_msg}'. "
+            f"If no specific city is mentioned, reply with 'Delhi'. "
+            f"Return ONLY the city name in English, nothing else."
+        )
+        data = {"contents": [{"parts": [{"text": prompt}]}]}
+        res = requests.post(url, headers=headers, json=data).json()
+        extracted = res['candidates'][0]['content']['parts'][0]['text'].strip()
+        return extracted if extracted else "Delhi"
+    except Exception:
+        return "Delhi"
+
 @app.get("/")
 def home():
     return {"status": "Backend server running!"}
@@ -49,38 +66,25 @@ def handle_chat(payload: UserQuery):
     try:
         user_msg = payload.message
         
-        # Comprehensive Stop Words list (English, Hindi, Hinglish)
-        stop_words = [
-            "what", "is", "the", "weather", "wheather", "in", "right", "now", "today", "how", 
-            "kaisa", "hai", "mausam", "batao", "ka", "ki", "ko", "temperature",
-            "aaj", "kya", "kaha", "degree", "tell", "me", "about", "mai", "me", "kharab",
-            "achha", "baaris", "barish", "dhop", "garmi", "sardi", "thand", "rain"
-        ]
-        
-        city = "Delhi"
-        for word in user_msg.split():
-            clean_word = "".join(filter(str.isalpha, word))
-            if len(clean_word) > 2 and clean_word.lower() not in stop_words:
-                city = clean_word
-                break
-                
+        # Smart City Extraction using AI
+        city = extract_city_with_gemini(user_msg)
         weather_data = fetch_weather(city)
         
         if weather_data:
             prompt = (
-                f"User Asked: '{user_msg}'\n"
-                f"Live Weather Data for {city}: {weather_data}\n\n"
+                f"User Query: '{user_msg}'\n"
+                f"Real-time Live Weather Data for {city}: {weather_data}\n\n"
                 f"INSTRUCTION:\n"
-                f"1. Summarize the live weather details accurately and naturally to answer the user's specific question.\n"
-                f"2. Detect whether the user asked in English, Hindi (Devanagari), or Hinglish (Roman script).\n"
-                f"3. Respond ONLY in that same language (English, Hindi, or Hinglish)."
+                f"1. You HAVE real-time live data provided above. Answer the user's question directly using this data.\n"
+                f"2. Detect the language/script of the user query (English, Hindi, or Hinglish).\n"
+                f"3. Respond ONLY in that EXACT SAME language/style (e.g. if Hinglish, answer in Hinglish)."
             )
         else:
             prompt = (
-                f"User Message: '{user_msg}'\n\n"
+                f"User Query: '{user_msg}'\n\n"
                 f"INSTRUCTION:\n"
-                f"1. Politely inform the user that weather data for '{city}' could not be retrieved.\n"
-                f"2. Respond ONLY in the same language as the user input (English, Hindi, or Hinglish)."
+                f"1. Explain politely that you couldn't fetch live weather details for '{city}' at this moment.\n"
+                f"2. Respond in the exact same language (English, Hindi, or Hinglish)."
             )
 
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={GEMINI_API_KEY}"
