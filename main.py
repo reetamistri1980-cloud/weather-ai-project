@@ -73,28 +73,24 @@ def handle_chat(payload: UserQuery):
         city = extract_city(user_msg)
         weather_data = fetch_weather(city)
         
+        # If extracted city fails on OpenWeather, default to Delhi
         if not weather_data and city != "Delhi":
             city = "Delhi"
             weather_data = fetch_weather("Delhi")
 
+        # FIX: Agar weather data mil gaya, toh AI key rate-limit skip karke direct 100% success response do!
         if weather_data:
-            prompt = (
-                f"User Question: '{user_msg}'\n"
-                f"LIVE WEATHER DATA FOR {city}: {weather_data}\n\n"
-                f"INSTRUCTIONS:\n"
-                f"1. Summarize the live weather details accurately based on the provided data.\n"
-                f"2. Respond ONLY in simple, clear, and easy-to-understand English.\n"
-                f"3. Do NOT say you lack real-time data."
-            )
-        else:
-            prompt = (
-                f"User Question: '{user_msg}'\n\n"
-                f"INSTRUCTIONS:\n"
-                f"1. Answer the user's question directly in simple, clear English."
-            )
-
+            reply_text = f"The current temperature in {weather_data['city']} is {weather_data['temperature']}°C with {weather_data['condition']}. Humidity is {weather_data['humidity']}% and wind speed is {weather_data['wind_speed']} m/s."
+            return {
+                "reply": reply_text,
+                "weather_card": weather_data,
+                "status": "success"
+            }
+        
+        # Non-weather questions fallback to Gemini
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
         headers = {'Content-Type': 'application/json'}
+        prompt = f"Answer this question in simple English: '{user_msg}'"
         data = {"contents": [{"parts": [{"text": prompt}]}]}
         
         response = requests.post(url, headers=headers, json=data, timeout=10)
@@ -104,17 +100,16 @@ def handle_chat(payload: UserQuery):
             reply_text = res_data['candidates'][0]['content']['parts'][0]['text']
             return {
                 "reply": reply_text,
-                "weather_card": weather_data,
+                "weather_card": None,
                 "status": "success"
             }
         else:
-            if weather_data:
-                return {
-                    "reply": f"The current temperature in {weather_data['city']} is {weather_data['temperature']}°C with {weather_data['condition']}.",
-                    "weather_card": weather_data,
-                    "status": "success"
-                }
-            return {"error_detail": res_data, "status": "failed"}
+            return {
+                "reply": "I could not fetch an answer right now. Please try again in a few moments.",
+                "weather_card": None,
+                "status": "failed",
+                "error_detail": res_data
+            }
 
     except Exception as e:
-        return {"error_detail": str(e), "status": "failed"}
+        return {"reply": f"Error occurred: {str(e)}", "weather_card": None, "status": "failed"}
