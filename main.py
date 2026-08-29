@@ -88,8 +88,8 @@ def handle_chat(payload: UserQuery):
                 f"3. If they asked for weather, politely state that live data for '{city}' could not be fetched."
             )
 
-        # Using gemini-1.5-flash for free tier quota stability
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+        # High-quota stable model endpoint (gemini-2.5-flash)
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
         headers = {'Content-Type': 'application/json'}
         data = {"contents": [{"parts": [{"text": prompt}]}]}
         
@@ -104,6 +104,14 @@ def handle_chat(payload: UserQuery):
                 "status": "success"
             }
         else:
+            # Smart Fallback: Gemini Quota Exceed hone par bhi weather data show karega!
+            if weather_data:
+                fallback_reply = f"The current temperature in {weather_data['city']} is {weather_data['temperature']}°C with {weather_data['condition']}."
+                return {
+                    "reply": fallback_reply,
+                    "weather_card": weather_data,
+                    "status": "success"
+                }
             return {"error_detail": res_data, "status": "failed"}
 
     except Exception as e:
