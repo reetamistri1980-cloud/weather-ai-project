@@ -49,20 +49,38 @@ def handle_chat(payload: UserQuery):
     try:
         user_msg = payload.message
         
+        # City Extraction Logic
         city = "Delhi"
+        stop_words = [
+            "what", "is", "the", "weather", "in", "right", "now", "today", "how", 
+            "kaisa", "kaisa", "hai", "mausam", "batao", "ka", "ki", "ko", "temperature",
+            "aaj", "kya", "kaha", "koli", "degree"
+        ]
+        
         for word in user_msg.split():
-            if word.isalpha() and len(word) > 2 and word.lower() not in ["what", "is", "the", "weather", "in", "right", "now", "today", "how"]:
-                city = word
+            clean_word = "".join(filter(str.isalpha, word))
+            if len(clean_word) > 2 and clean_word.lower() not in stop_words:
+                city = clean_word
                 break
                 
         weather_data = fetch_weather(city)
         
         if weather_data:
-            prompt = f"User asked: '{user_msg}'. Live Weather Data for {city}: {weather_data}. Summarize this accurately in a natural friendly AI tone."
+            prompt = (
+                f"User Asked: '{user_msg}'\n"
+                f"Live Weather Data for {city}: {weather_data}\n\n"
+                f"INSTRUCTION: Summarize the weather details naturally and helpfully. "
+                f"CRITICAL: Detect the language of the user's message ('{user_msg}') and respond in that EXACT SAME LANGUAGE "
+                f"(e.g., English, Hindi, Bengali, Marathi, Punjabi, Gujarati, etc.)."
+            )
         else:
-            prompt = user_msg
+            prompt = (
+                f"User Message: '{user_msg}'\n\n"
+                f"INSTRUCTION: Answer the user's query directly and helpfully. "
+                f"CRITICAL: Respond in the EXACT SAME LANGUAGE as the user's input."
+            )
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={GEMINI_API_KEY}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
         headers = {'Content-Type': 'application/json'}
         data = {
             "contents": [{
