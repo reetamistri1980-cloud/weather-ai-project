@@ -1,14 +1,11 @@
-import os
 import re
 import requests
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from google import genai
 
-app = FastAPI(title="Smart Gemini Weather Chatbot")
+app = FastAPI(title="Hyper-Local & Farming Weather AI Chatbot")
 
-# CORS SETUP
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -20,176 +17,130 @@ app.add_middleware(
 class UserQuery(BaseModel):
     message: str
 
-# Gemini Client Setup
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
-
-# State/Region Capital Mapper
-STATE_CAPITAL_MAP = {
-    "west bengal": "Kolkata",
-    "bengal": "Kolkata",
-    "maharashtra": "Mumbai",
-    "tamil nadu": "Chennai",
-    "karnataka": "Bengaluru",
-    "uttar pradesh": "Lucknow",
-    "gujarat": "Gandhinagar",
-    "rajasthan": "Jaipur",
-    "punjab": "Chandigarh",
-    "bihar": "Patna"
+# Local Landmark / Region to Coordinate Mapping (Hyper-Local Fix)
+LANDMARK_COORDS = {
+    "connaught place": {"name": "Connaught Place, New Delhi", "lat": 28.6315, "lon": 77.2167},
+    "cp": {"name": "Connaught Place, New Delhi", "lat": 28.6315, "lon": 77.2167},
+    "chandni chowk": {"name": "Chandni Chowk, Delhi", "lat": 28.6506, "lon": 77.2303},
+    "rohini": {"name": "Rohini, Delhi", "lat": 28.7041, "lon": 77.1025},
+    "dwarka": {"name": "Dwarka, Delhi", "lat": 28.5921, "lon": 77.0460},
 }
 
-def extract_city(message: str):
-    msg_lower = message.strip().lower()
+def get_location_coordinates(location_name: str):
+    loc_lower = location_name.lower().strip()
     
-    # State check
-    for state_key, capital in STATE_CAPITAL_MAP.items():
-        if state_key in msg_lower:
-            return capital
+    # 1. Check local landmarks list
+    if loc_lower in LANDMARK_COORDS:
+        return LANDMARK_COORDS[loc_lower]
 
-    patterns = [
-        r"weather\s+(?:in|of|at)\s+(.+)",
-        r"wheather\s+(?:in|of|at)\s+(.+)",
-        r"temperature\s+(?:in|of|at)\s+(.+)",
-        r"temp\s+(?:in|of|at)\s+(.+)",
-        r"forecast\s+(?:in|of|for|at)\s+(.+)",
-        r"mausam\s+(?:in|of|ka)\s+(.+)",
-        r"(.+?)\s+(?:weather|wheather|temperature|temp|mausam)$",
-    ]
+    # 2. Search Open-Meteo Geocoding
+    geo_url = "https://geocoding-api.open-meteo.com/v1/search"
+    geo_params = {"name": location_name, "count": 1, "language": "en", "format": "json"}
 
-    for pattern in patterns:
-        match = re.search(pattern, message, re.IGNORECASE)
-        if match:
-            city = match.group(1).strip()
-            city = re.sub(r"[?.!,]+$", "", city).strip()
-            city = re.sub(r"\s+(today|now|right now|please|batao|btao)$", "", city, flags=re.IGNORECASE).strip()
-            if city:
-                return STATE_CAPITAL_MAP.get(city.lower(), city)
-
-    weather_keywords = ["weather", "wheather", "temp", "temperature", "mausam", "mosam", "rain", "forecast"]
-    if any(k in msg_lower for k in weather_keywords):
-        return "Delhi"
+    try:
+        res = requests.get(geo_url, params=geo_params, timeout=8).json()
+        if res.get("results"):
+            loc = res["results"][0]
+            display_name = f"{loc.get('name', location_name)}, {loc.get('admin1', '')} ({loc.get('country', '')})"
+            return {
+                "name": display_name,
+                "lat": loc["latitude"],
+                "lon": loc["longitude"]
+            }
+    except Exception:
+        pass
 
     return None
 
-def get_weather(city: str):
-    geo_url = "https://geocoding-api.open-meteo.com/v1/search"
-    geo_params = {"name": city, "count": 1, "language": "en", "format": "json"}
-
-    geo_response = requests.get(geo_url, params=geo_params, timeout=10)
-    geo_response.raise_for_status()
-    geo_data = geo_response.json()
-
-    if not geo_data.get("results"):
-        return None
-
-    location = geo_data["results"][0]
-    latitude = location["latitude"]
-    longitude = location["longitude"]
-    location_name = location.get("name", city)
-    district = location.get("admin2", "")
-    state = location.get("admin1", "")
-    country = location.get("country", "")
-    timezone = location.get("timezone", "auto")
-
+def fetch_agri_and_local_weather(lat: float, lon: float):
     weather_url = "https://api.open-meteo.com/v1/forecast"
-    weather_params = {
-        "latitude": latitude,
-        "longitude": longitude,
-        "current": (
-            "temperature_2m,relative_humidity_2m,apparent_temperature,"
-            "precipitation,rain,weather_code,wind_speed_10m"
-        ),
-        "timezone": timezone,
-        "temperature_unit": "celsius",
-        "wind_speed_unit": "kmh"
+    params = {
+        "latitude": lat,
+        "longitude": lon,
+        "current": "temperature_2m,relative_humidity_2m,apparent_temperature,rain,weather_code,wind_speed_10m",
+        "hourly": "soil_temperature_0_to_10cm,soil_moisture_0_to_1cm",
+        "timezone": "auto"
     }
 
-    weather_response = requests.get(weather_url, params=weather_params, timeout=10)
-    weather_response.raise_for_status()
-    current = weather_response.json()["current"]
+    res = requests.get(weather_url, params=params, timeout=10).json()
+    current = res.get("current", {})
+    hourly = res.get("hourly", {})
+
+    soil_temp = hourly.get("soil_temperature_0_to_10cm", [None])[0]
+    soil_moisture = hourly.get("soil_moisture_0_to_1cm", [None])[0]
 
     return {
-        "city": location_name,
-        "district": district,
-        "state": state,
-        "country": country,
-        "temperature": current.get("temperature_2m"),
+        "temp": current.get("temperature_2m"),
         "feels_like": current.get("apparent_temperature"),
         "humidity": current.get("relative_humidity_2m"),
-        "precipitation": current.get("precipitation"),
         "rain": current.get("rain"),
+        "wind": current.get("wind_speed_10m"),
         "weather_code": current.get("weather_code"),
-        "wind_speed": current.get("wind_speed_10m"),
+        "soil_temp": soil_temp,
+        "soil_moisture": soil_moisture,
         "time": current.get("time")
     }
 
-def weather_description(code: int) -> str:
-    descriptions = {
-        0: "Clear sky ☀️", 1: "Mainly clear 🌤️", 2: "Partly cloudy ⛅", 3: "Overcast ☁️",
-        45: "Foggy 🌫️", 51: "Light drizzle 🌦️", 61: "Slight rain 🌧️", 80: "Rain showers 🌦️", 95: "Thunderstorm 🌩️"
-    }
-    return descriptions.get(code, "Clear/Partly Cloudy")
-
-def create_weather_report(weather: dict) -> str:
-    condition = weather_description(weather["weather_code"])
-    location_parts = [weather["city"]]
+def generate_report(loc_name: str, data: dict) -> str:
+    # Farming suitability advice based on humidity & soil moisture
+    humidity = data["humidity"] or 0
+    moisture = data["soil_moisture"] or 0
     
-    if weather["district"] and weather["district"].lower() != weather["city"].lower():
-        location_parts.append(weather["district"])
-    if weather["state"]:
-        location_parts.append(weather["state"])
-    if weather["country"]:
-        location_parts.append(weather["country"])
-        
-    full_location = ", ".join(location_parts)
+    if humidity > 60 and moisture > 0.2:
+        farming_advice = "🌱 **Farming Suggestion:** Soil moisture and humidity are optimal for sowing and irrigation!"
+    elif humidity < 35:
+        farming_advice = "🌾 **Farming Suggestion:** Air is dry. Proper field irrigation (paani dena) is recommended."
+    else:
+        farming_advice = "🚜 **Farming Suggestion:** Conditions are moderate for standard agricultural activities."
 
     return (
-        f"🤖 **Weather Report**\n\n"
-        f"📍 **Location:** {full_location}\n"
+        f"📍 **Location:** {loc_name}\n"
         f"────────────────────────\n"
-        f"🌡️ **Temperature:** {weather['temperature']}°C (Feels like {weather['feels_like']}°C)\n"
-        f"☁️ **Condition:** {condition}\n"
-        f"💧 **Humidity:** {weather['humidity']}%\n"
-        f"🌧️ **Rainfall:** {weather['rain']} mm\n"
-        f"💨 **Wind Speed:** {weather['wind_speed']} km/h\n"
-        f"🕐 **Updated:** {weather['time'].replace('T', ' ')}"
+        f"🌡️ **Temperature:** {data['temp']}°C (Feels like {data['feels_like']}°C)\n"
+        f"💧 **Air Humidity:** {data['humidity']}%\n"
+        f"🌧️ **Rainfall:** {data['rain']} mm\n"
+        f"💨 **Wind Speed:** {data['wind']} km/h\n"
+        f"────────────────────────\n"
+        f"🧪 **Agricultural / Soil Data:**\n"
+        f"🌱 **Soil Temp (0-10cm):** {data['soil_temp']}°C\n"
+        f"💦 **Soil Moisture (0-1cm):** {data['soil_moisture']} m³/m³\n\n"
+        f"{farming_advice}"
     )
-
-def ask_gemini(prompt: str) -> str:
-    if not client:
-        return f"I can help with general queries! Regarding '{prompt}': Please configure GEMINI_API_KEY in server environment for full AI functionality."
-    
-    try:
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt
-        )
-        return response.text
-    except Exception as err:
-        return f"Hello! I am your AI assistant. I couldn't process that specific query right now, but feel free to ask me weather updates or general questions!"
 
 @app.get("/")
 def home():
-    return {"status": "success", "message": "Smart Gemini Weather Chatbot API is running!"}
+    return {"status": "online", "message": "Hyper-local & Agricultural Weather API Ready"}
 
 @app.post("/api/chat")
 def chat(payload: UserQuery):
-    user_msg = payload.message.strip()
+    msg = payload.message.strip()
+    if not msg:
+        return {"status": "failed", "reply": "Please send a message."}
 
-    if not user_msg:
-        return {"status": "failed", "reply": "Please enter a message.", "weather_card": None}
+    # Extract location name (Default: Connaught Place if "cp" mentioned, or location after "in/at")
+    loc_match = re.search(r"(?:weather|temp|mausam|farming|fasal)\s+(?:in|of|at|near)\s+(.+)", msg, re.IGNORECASE)
+    
+    if loc_match:
+        target_loc = loc_match.group(1).strip()
+    elif "cp" in msg.lower() or "connaught place" in msg.lower():
+        target_loc = "cp"
+    elif any(k in msg.lower() for k in ["weather", "mausam", "temp", "humidity", "fasal"]):
+        target_loc = "Delhi"
+    else:
+        return {
+            "status": "success",
+            "reply": f"Ask me about weather or farming data for any specific area! Example: 'weather in CP' or 'farming data in Rohini'."
+        }
 
-    # Check if user is asking for Weather
-    city = extract_city(user_msg)
+    coords = get_location_coordinates(target_loc)
+    if not coords:
+        return {"status": "failed", "reply": f"Could not find coordinates for '{target_loc}'."}
 
-    if city:
-        try:
-            weather = get_weather(city)
-            if weather:
-                return {"status": "success", "reply": create_weather_report(weather), "weather_card": weather}
-        except Exception:
-            pass
+    weather_data = fetch_agri_and_local_weather(coords["lat"], coords["lon"])
+    report = generate_report(coords["name"], weather_data)
 
-    # If not weather query, route to Gemini AI
-    ai_reply = ask_gemini(user_msg)
-    return {"status": "success", "reply": ai_reply, "weather_card": None}
+    return {
+        "status": "success",
+        "reply": report,
+        "data": weather_data
+    }
