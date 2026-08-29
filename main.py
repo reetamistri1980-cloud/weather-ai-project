@@ -25,16 +25,14 @@ class UserQuery(BaseModel):
     message: str
 
 def extract_city(user_msg: str) -> str:
-    # Filter out common filler words across English, Hindi, and Hinglish
     stop_words = {
         "what", "is", "the", "weather", "wheather", "in", "right", "now", "today", "how", 
         "kaisa", "kaise", "kesa", "kese", "hai", "mausam", "mosam", "batao", "btao", 
         "ka", "ki", "ko", "temperature", "temp", "aaj", "kya", "kaha", "degree", 
         "tell", "me", "about", "mai", "me", "kharab", "achha", "baaris", "barish", 
-        "dhop", "garmi", "sardi", "thand", "rain", "din", "kaisa", "hal", "haal"
+        "dhop", "garmi", "sardi", "thand", "rain", "din", "hal", "haal", "please", "pls"
     }
     
-    # Extract capital/alphabetic words
     words = re.findall(r'\b[a-zA-Z]+\b', user_msg)
     for word in words:
         if len(word) > 2 and word.lower() not in stop_words:
@@ -73,18 +71,18 @@ def handle_chat(payload: UserQuery):
         if weather_data:
             prompt = (
                 f"User Asked: '{user_msg}'\n"
-                f"FETCHED WEATHER DATA FOR {city}: {weather_data}\n\n"
+                f"LIVE WEATHER DATA FOR {city}: {weather_data}\n\n"
                 f"INSTRUCTIONS:\n"
-                f"1. You have official real-time weather data provided above. Answer the user's question directly using this data.\n"
-                f"2. Match the user's language EXACTLY: if English, reply in English; if Hindi (Devanagari), reply in Hindi; if Hinglish (Roman script Hindi), reply in Hinglish.\n"
-                f"3. Do NOT say you cannot access live data."
+                f"1. Summarize the live weather details accurately based on the provided data.\n"
+                f"2. The user might use broken English, simple phrases, or basic mixed inputs. Understand their intent and respond in simple, clear, and easy-to-understand English.\n"
+                f"3. Do NOT say you lack real-time data."
             )
         else:
             prompt = (
                 f"User Asked: '{user_msg}'\n\n"
                 f"INSTRUCTIONS:\n"
-                f"1. Tell the user that weather details for '{city}' could not be fetched right now.\n"
-                f"2. Respond in the exact same language (English, Hindi, or Hinglish)."
+                f"1. Inform the user in simple English that weather details for '{city}' could not be found right now.\n"
+                f"2. Keep the explanation clear and easy to read."
             )
 
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={GEMINI_API_KEY}"
