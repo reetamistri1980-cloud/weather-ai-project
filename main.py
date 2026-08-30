@@ -17,7 +17,6 @@ app.add_middleware(
 class UserQuery(BaseModel):
     message: str
 
-# Local Landmark Coordinates Mapping
 LANDMARK_COORDS = {
     "connaught place": {"name": "Connaught Place, New Delhi, Delhi, India", "lat": 28.6315, "lon": 77.2167},
     "cp": {"name": "Connaught Place, New Delhi, Delhi, India", "lat": 28.6315, "lon": 77.2167},
@@ -26,7 +25,6 @@ LANDMARK_COORDS = {
     "dwarka": {"name": "Dwarka, South West Delhi, Delhi, India", "lat": 28.5921, "lon": 77.0460},
 }
 
-# Weather Code Interpretation Helper
 WMO_CODES = {
     0: "Clear sky ☀️",
     1: "Mainly clear 🌤️", 2: "Partly cloudy ⛅", 3: "Overcast ☁️",
@@ -94,29 +92,35 @@ def fetch_agri_local_and_forecast_weather(lat: float, lon: float):
     params = {
         "latitude": lat,
         "longitude": lon,
-        "current": "temperature_2m,relative_humidity_2m,apparent_temperature,rain,weather_code,wind_speed_10m,surface_pressure,uv_index",
-        "hourly": "soil_temperature_0_to_10cm,soil_moisture_0_to_1cm",
-        "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,max_wind_speed_10m,uv_index_max",
+        "current_weather": "true",
+        "hourly": "relative_humidity_2m,apparent_temperature,rain,surface_pressure,uv_index,soil_temperature_0_to_10cm,soil_moisture_0_to_1cm",
+        "daily": "weathercode,temperature_2m_max,temperature_2m_min,precipitation_sum,max_wind_speed_10m",
         "timezone": "auto"
     }
 
     res = requests.get(weather_url, params=params, timeout=10).json()
-    current = res.get("current", {})
+    curr_weather = res.get("current_weather", {})
     hourly = res.get("hourly", {})
     daily = res.get("daily", {})
 
+    # Extract first hourly values as fallbacks for detailed parameters
+    feels_like = hourly.get("apparent_temperature", [None])[0]
+    humidity = hourly.get("relative_humidity_2m", [None])[0]
+    rain = hourly.get("rain", [None])[0]
+    pressure = hourly.get("surface_pressure", [None])[0]
+    uv = hourly.get("uv_index", [None])[0]
     soil_temp = hourly.get("soil_temperature_0_to_10cm", [None])[0]
     soil_moisture = hourly.get("soil_moisture_0_to_1cm", [None])[0]
 
     return {
-        "temp": current.get("temperature_2m"),
-        "feels_like": current.get("apparent_temperature"),
-        "humidity": current.get("relative_humidity_2m"),
-        "rain": current.get("rain"),
-        "wind": current.get("wind_speed_10m"),
-        "pressure": current.get("surface_pressure"),
-        "uv": current.get("uv_index"),
-        "code": current.get("weather_code", 0),
+        "temp": curr_weather.get("temperature"),
+        "feels_like": feels_like if feels_like is not None else curr_weather.get("temperature"),
+        "humidity": humidity,
+        "rain": rain if rain is not None else 0.0,
+        "wind": curr_weather.get("windspeed"),
+        "pressure": pressure,
+        "uv": uv,
+        "code": curr_weather.get("weathercode", 0),
         "soil_temp": soil_temp,
         "soil_moisture": soil_moisture,
         "daily": daily
@@ -127,23 +131,22 @@ def generate_report(loc_name: str, data: dict) -> str:
     moisture = data["soil_moisture"] if data["soil_moisture"] is not None else 0
     wind = data["wind"] if data["wind"] is not None else 0
     rain = data["rain"] if data["rain"] is not None else 0
-    temp = data["temp"] if data["temp"] is not None else 0
+    temp = data["temp"]
     w_code = data["code"]
     
-    # 1. Weather Alerts Logic
     alerts = []
     if wind > 40:
-        alerts.append("⚠️ **WIND ALERT:** High wind speeds detected! Secure loose items.")
+        alerts.append("⚠️ **WIND ALERT:** High wind speeds detected!")
     if rain > 15 or w_code in [65, 82, 95, 96, 99]:
-        alerts.append("🚨 **HEAVY RAIN / THUNDERSTORM ALERT:** Risk of waterlogging & severe weather.")
-    if temp > 40:
-        alerts.append("🔥 **HEATWAVE ALERT:** Extreme high temperature. Stay hydrated.")
-    elif temp < 5:
-        alerts.append("❄️ **COLD WAVE ALERT:** Low temperature alert.")
+        alerts.append("🚨 **HEAVY RAIN / THUNDERSTORM ALERT:** Risk of waterlogging.")
+    if temp is not None:
+        if temp > 40:
+            alerts.append("🔥 **HEATWAVE ALERT:** Extreme high temperature.")
+        elif temp < 5:
+            alerts.append("❄️ **COLD WAVE ALERT:** Low temperature alert.")
     
     alert_text = "\n".join(alerts) if alerts else "✅ **Weather Alert:** No severe weather warnings active."
 
-    # 2. Farming Advice Logic
     if humidity > 60 and moisture > 0.2:
         farming_advice = "🌱 **Farming Suggestion:** Optimal soil moisture & humidity for sowing and irrigation!"
     elif humidity < 35:
@@ -151,14 +154,13 @@ def generate_report(loc_name: str, data: dict) -> str:
     else:
         farming_advice = "🚜 **Farming Suggestion:** Conditions are moderate for standard agricultural activities."
 
-    # 3. 3-Day Forecast Logic
     daily = data.get("daily", {})
     forecast_text = ""
     if daily and "time" in daily:
         dates = daily.get("time", [])[:3]
         max_temps = daily.get("temperature_2m_max", [])[:3]
         min_temps = daily.get("temperature_2m_min", [])[:3]
-        codes = daily.get("weather_code", [])[:3]
+        codes = daily.get("weathercode", [])[:3]
 
         for i in range(len(dates)):
             cond = WMO_CODES.get(codes[i], "Normal")
@@ -166,11 +168,14 @@ def generate_report(loc_name: str, data: dict) -> str:
 
     condition_desc = WMO_CODES.get(w_code, "Clear")
 
+    temp_str = f"{temp}°C" if temp is not None else "N/A"
+    feels_str = f"{data['feels_like']}°C" if data['feels_like'] is not None else "N/A"
+
     return (
         f"📍 **Location:** {loc_name}\n"
         f"🌤️ **Condition:** {condition_desc}\n"
         f"────────────────────────\n"
-        f"🌡️ **Temperature:** {data['temp']}°C (Feels like {data['feels_like']}°C)\n"
+        f"🌡️ **Temperature:** {temp_str} (Feels like {feels_str})\n"
         f"💧 **Air Humidity:** {data['humidity']}%\n"
         f"🌧️ **Rainfall:** {data['rain']} mm\n"
         f"💨 **Wind Speed:** {data['wind']} km/h\n"
