@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-app = FastAPI(title="Hyper-Local, Agri & Forecast Weather AI Chatbot")
+app = FastAPI(title="Hyper-Local, Agri & 7-Day Forecast Weather AI Chatbot")
 
 app.add_middleware(
     CORSMiddleware,
@@ -38,21 +38,17 @@ WMO_CODES = {
 def extract_location(text: str) -> str:
     msg = text.strip().lower()
 
-    # 1. Check for landmark directly
     for landmark in LANDMARK_COORDS:
         if re.search(r'\b' + re.escape(landmark) + r'\b', msg):
             return landmark
 
-    # 2. Extract after keywords like 'in', 'of', 'at', 'near', 'for'
     match = re.search(r"(?:weather|wheather|wether|temp|mausam|farming|fasal|detail|details|forecast|alert|alerts|climate)\s+(?:in|of|at|near|for)\s+(.+)", msg, re.IGNORECASE)
     
     if match:
         loc = match.group(1).strip()
     else:
-        # Fallback keyword cleaning
         loc = re.sub(r"\b(is|there|any|weather|wheather|wether|temp|mausam|farming|fasal|detail|details|info|show|give|me|forecast|alert|alerts|climate)\b", "", msg, flags=re.IGNORECASE).strip()
 
-    # 3. Clean extra trailing/leading words (e.g. 'today', 'now', 'right now', 'please', punctuation)
     loc = re.sub(r"\b(today|tomorrow|now|right now|please|tell me|pls)\b", "", loc, flags=re.IGNORECASE).strip()
     loc = re.sub(r"[?.!,]+$", "", loc).strip()
     loc = re.sub(r"^[?.!,]+", "", loc).strip()
@@ -179,13 +175,14 @@ def generate_report(loc_name: str, data: dict) -> str:
     else:
         farming_advice = "🚜 **Farming Suggestion:** Conditions are moderate for standard agricultural activities."
 
+    # Extended to 7-Day Forecast
     daily = data.get("daily", {})
     forecast_text = ""
     if daily and "time" in daily:
-        dates = daily.get("time", [])[:3]
-        max_temps = daily.get("temperature_2m_max", [])[:3]
-        min_temps = daily.get("temperature_2m_min", [])[:3]
-        codes = daily.get("weathercode", [])[:3]
+        dates = daily.get("time", [])[:7]
+        max_temps = daily.get("temperature_2m_max", [])[:7]
+        min_temps = daily.get("temperature_2m_min", [])[:7]
+        codes = daily.get("weathercode", [])[:7]
 
         for i in range(len(dates)):
             cond = WMO_CODES.get(codes[i], "Normal")
@@ -214,13 +211,13 @@ def generate_report(loc_name: str, data: dict) -> str:
         f"💦 **Soil Moisture (0-1cm):** {data['soil_moisture']} m³/m³\n"
         f"{farming_advice}\n"
         f"────────────────────────\n"
-        f"🔮 **3-DAY WEATHER FORECAST:**\n"
+        f"🔮 **7-DAY WEATHER FORECAST:**\n"
         f"{forecast_text}"
     )
 
 @app.get("/")
 def home():
-    return {"status": "online", "message": "Hyper-local, Forecast & Agricultural Weather API Ready"}
+    return {"status": "online", "message": "Hyper-local, 7-Day Forecast & Agricultural Weather API Ready"}
 
 @app.post("/api/chat")
 def chat(payload: UserQuery):
