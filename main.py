@@ -38,18 +38,26 @@ WMO_CODES = {
 def extract_location(text: str) -> str:
     msg = text.strip().lower()
 
+    # 1. Check for landmark directly
     for landmark in LANDMARK_COORDS:
         if re.search(r'\b' + re.escape(landmark) + r'\b', msg):
             return landmark
 
-    match = re.search(r"(?:weather|wheather|wether|temp|mausam|farming|fasal|detail|details|forecast|alert|climate)\s+(?:in|of|at|near|for)\s+(.+)", msg, re.IGNORECASE)
+    # 2. Extract after keywords like 'in', 'of', 'at', 'near', 'for'
+    match = re.search(r"(?:weather|wheather|wether|temp|mausam|farming|fasal|detail|details|forecast|alert|alerts|climate)\s+(?:in|of|at|near|for)\s+(.+)", msg, re.IGNORECASE)
+    
     if match:
         loc = match.group(1).strip()
-        loc = re.sub(r"[?.!,]+$", "", loc).strip()
-        return loc
+    else:
+        # Fallback keyword cleaning
+        loc = re.sub(r"\b(is|there|any|weather|wheather|wether|temp|mausam|farming|fasal|detail|details|info|show|give|me|forecast|alert|alerts|climate)\b", "", msg, flags=re.IGNORECASE).strip()
 
-    cleaned = re.sub(r"\b(weather|wheather|wether|temp|mausam|farming|fasal|detail|details|info|show|give|me|forecast|alert|climate)\b", "", msg, flags=re.IGNORECASE).strip()
-    return cleaned if cleaned else "Delhi"
+    # 3. Clean extra trailing/leading words (e.g. 'today', 'now', 'right now', 'please', punctuation)
+    loc = re.sub(r"\b(today|tomorrow|now|right now|please|tell me|pls)\b", "", loc, flags=re.IGNORECASE).strip()
+    loc = re.sub(r"[?.!,]+$", "", loc).strip()
+    loc = re.sub(r"^[?.!,]+", "", loc).strip()
+
+    return loc if loc else "Delhi"
 
 def get_location_coordinates(location_name: str):
     loc_lower = location_name.lower().strip()
@@ -88,7 +96,6 @@ def get_location_coordinates(location_name: str):
     return None
 
 def fetch_weather_and_soil_data(lat: float, lon: float):
-    # Call 1: Standard Current & Forecast Data
     main_url = "https://api.open-meteo.com/v1/forecast"
     main_params = {
         "latitude": lat,
@@ -99,7 +106,6 @@ def fetch_weather_and_soil_data(lat: float, lon: float):
         "timezone": "auto"
     }
     
-    # Call 2: Agriculture & Soil Data
     agri_params = {
         "latitude": lat,
         "longitude": lon,
@@ -116,7 +122,6 @@ def fetch_weather_and_soil_data(lat: float, lon: float):
         agri_hourly = agri_res.get("hourly", {})
         daily = main_res.get("daily", {})
 
-        # Extract values
         temp = curr.get("temperature")
         wind = curr.get("windspeed")
         code = curr.get("weathercode", 0)
@@ -143,7 +148,7 @@ def fetch_weather_and_soil_data(lat: float, lon: float):
             "soil_moisture": soil_moisture,
             "daily": daily
         }
-    except Exception as e:
+    except Exception:
         return None
 
 def generate_report(loc_name: str, data: dict) -> str:
