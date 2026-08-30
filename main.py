@@ -3,8 +3,9 @@ import requests
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from deep_translator import GoogleTranslator, single_detection
 
-app = FastAPI(title="Hyper-Local, Agri & 7-Day Forecast Weather AI Chatbot")
+app = FastAPI(title="All-India Multi-Lingual Hyper-Local Weather AI Chatbot")
 
 app.add_middleware(
     CORSMiddleware,
@@ -25,15 +26,25 @@ LANDMARK_COORDS = {
     "dwarka": {"name": "Dwarka, South West Delhi, Delhi, India", "lat": 28.5921, "lon": 77.0460},
 }
 
-WMO_CODES = {
-    0: "Clear sky ☀️",
-    1: "Mainly clear 🌤️", 2: "Partly cloudy ⛅", 3: "Overcast ☁️",
-    45: "Foggy 🌫️", 48: "Depositing rime fog 🌫️",
-    51: "Light drizzle 🌦️", 53: "Moderate drizzle 🌧️", 55: "Dense drizzle 🌧️",
-    61: "Slight rain 🌧️", 63: "Moderate rain 🌧️", 65: "Heavy rain 🌧️⚡",
+WMO_CODES_EN = {
+    0: "Clear sky ☀️", 1: "Mainly clear 🌤️", 2: "Partly cloudy ⛅", 3: "Overcast ☁️",
+    45: "Foggy 🌫️", 48: "Depositing rime fog 🌫️", 51: "Light drizzle 🌦️", 53: "Moderate drizzle 🌧️",
+    55: "Dense drizzle 🌧️", 61: "Slight rain 🌧️", 63: "Moderate rain 🌧️", 65: "Heavy rain 🌧️⚡",
     80: "Slight rain showers 🌦️", 81: "Moderate rain showers 🌧️", 82: "Violent rain showers ⛈️",
     95: "Thunderstorm 🌩️", 96: "Thunderstorm with slight hail ⛈️", 99: "Thunderstorm with heavy hail ⛈️🚨"
 }
+
+def detect_user_language(text: str) -> str:
+    try:
+        # Detect language ISO code using deep-translator
+        lang = single_detection(text, api_key=None)
+        return lang if lang else "en"
+    except Exception:
+        # Fallback to Hinglish/English check
+        hinglish_words = ["kaisa", "kaisey", "hai", "kya", "batayo", "batao", "aaj", "kal", "kaise", "bata", "mausam"]
+        if any(w in text.lower().split() for w in hinglish_words):
+            return "hinglish"
+        return "en"
 
 def extract_location(text: str) -> str:
     msg = text.strip().lower()
@@ -42,14 +53,22 @@ def extract_location(text: str) -> str:
         if re.search(r'\b' + re.escape(landmark) + r'\b', msg):
             return landmark
 
+    # First attempt: English/Hinglish keywords
     match = re.search(r"(?:weather|wheather|wether|temp|mausam|farming|fasal|detail|details|forecast|alert|alerts|climate)\s+(?:in|of|at|near|for)\s+(.+)", msg, re.IGNORECASE)
     
     if match:
         loc = match.group(1).strip()
     else:
-        loc = re.sub(r"\b(is|there|any|weather|wheather|wether|temp|mausam|farming|fasal|detail|details|info|show|give|me|forecast|alert|alerts|climate)\b", "", msg, flags=re.IGNORECASE).strip()
+        # Translate to English to cleanly extract location from non-English scripts
+        try:
+            translated_text = GoogleTranslator(source='auto', target='en').translate(msg)
+            match_trans = re.search(r"(?:weather|temperature|climate|forecast|alert|alerts|farming)\s+(?:in|of|at|near|for)?\s+(.+)", translated_text, re.IGNORECASE)
+            loc = match_trans.group(1).strip() if match_trans else translated_text
+        except Exception:
+            loc = msg
 
-    loc = re.sub(r"\b(today|tomorrow|now|right now|please|tell me|pls)\b", "", loc, flags=re.IGNORECASE).strip()
+    # Cleaning noise words
+    loc = re.sub(r"\b(is|there|any|weather|wheather|wether|temp|mausam|farming|fasal|detail|details|info|show|give|me|forecast|alert|alerts|climate|today|tomorrow|now|right now|please|tell me|pls)\b", "", loc, flags=re.IGNORECASE).strip()
     loc = re.sub(r"[?.!,]+$", "", loc).strip()
     loc = re.sub(r"^[?.!,]+", "", loc).strip()
 
@@ -97,7 +116,7 @@ def fetch_weather_and_soil_data(lat: float, lon: float):
         "latitude": lat,
         "longitude": lon,
         "current_weather": "true",
-        "hourly": "relative_humidity_2m,apparent_temperature,precipitation,surface_pressure,uv_index",
+        "hourly": "temperature_2m,precipitation,weathercode,relative_humidity_2m,apparent_temperature,surface_pressure,uv_index",
         "daily": "weathercode,temperature_2m_max,temperature_2m_min",
         "timezone": "auto"
     }
@@ -131,6 +150,13 @@ def fetch_weather_and_soil_data(lat: float, lon: float):
         soil_temp = agri_hourly.get("soil_temperature_0_to_10cm", [None])[0]
         soil_moisture = agri_hourly.get("soil_moisture_0_to_1cm", [None])[0]
 
+        hourly_data = {
+            "time": main_hourly.get("time", [])[:24],
+            "temperature_2m": main_hourly.get("temperature_2m", [])[:24],
+            "precipitation": main_hourly.get("precipitation", [])[:24],
+            "weathercode": main_hourly.get("weathercode", [])[:24]
+        }
+
         return {
             "temp": temp,
             "feels_like": feels_like if feels_like is not None else temp,
@@ -142,19 +168,20 @@ def fetch_weather_and_soil_data(lat: float, lon: float):
             "code": code,
             "soil_temp": soil_temp,
             "soil_moisture": soil_moisture,
-            "daily": daily
+            "daily": daily,
+            "hourly": hourly_data
         }
     except Exception:
         return None
 
-def generate_report(loc_name: str, data: dict) -> str:
+def generate_report(loc_name: str, data: dict, lang_code: str) -> str:
     humidity = data["humidity"] if data["humidity"] is not None else 0
     moisture = data["soil_moisture"] if data["soil_moisture"] is not None else 0
     wind = data["wind"] if data["wind"] is not None else 0
     rain = data["rain"] if data["rain"] is not None else 0
     temp = data["temp"]
     w_code = data["code"]
-    
+
     alerts = []
     if wind > 40:
         alerts.append("⚠️ **WIND ALERT:** High wind speeds detected!")
@@ -175,7 +202,6 @@ def generate_report(loc_name: str, data: dict) -> str:
     else:
         farming_advice = "🚜 **Farming Suggestion:** Conditions are moderate for standard agricultural activities."
 
-    # Extended to 7-Day Forecast
     daily = data.get("daily", {})
     forecast_text = ""
     if daily and "time" in daily:
@@ -185,15 +211,14 @@ def generate_report(loc_name: str, data: dict) -> str:
         codes = daily.get("weathercode", [])[:7]
 
         for i in range(len(dates)):
-            cond = WMO_CODES.get(codes[i], "Normal")
+            cond = WMO_CODES_EN.get(codes[i], "Normal")
             forecast_text += f"📅 **{dates[i]}:** Max {max_temps[i]}°C | Min {min_temps[i]}°C ({cond})\n"
 
-    condition_desc = WMO_CODES.get(w_code, "Clear sky ☀️")
-
+    condition_desc = WMO_CODES_EN.get(w_code, "Clear sky ☀️")
     temp_str = f"{temp}°C" if temp is not None else "N/A"
     feels_str = f"{data['feels_like']}°C" if data['feels_like'] is not None else "N/A"
 
-    return (
+    english_report = (
         f"📍 **Location:** {loc_name}\n"
         f"🌤️ **Condition:** {condition_desc}\n"
         f"────────────────────────\n"
@@ -215,9 +240,20 @@ def generate_report(loc_name: str, data: dict) -> str:
         f"{forecast_text}"
     )
 
+    # Return directly if English or Hinglish
+    if lang_code in ["en", "hinglish"]:
+        return english_report
+
+    # Translate to User's native Indian language (Tamil, Telugu, Marathi, Bengali, Gujarati, etc.)
+    try:
+        translated_report = GoogleTranslator(source='en', target=lang_code).translate(english_report)
+        return translated_report
+    except Exception:
+        return english_report
+
 @app.get("/")
 def home():
-    return {"status": "online", "message": "Hyper-local, 7-Day Forecast & Agricultural Weather API Ready"}
+    return {"status": "online", "message": "All-India Multi-Lingual Weather API Ready"}
 
 @app.post("/api/chat")
 def chat(payload: UserQuery):
@@ -225,6 +261,7 @@ def chat(payload: UserQuery):
     if not msg:
         return {"status": "failed", "reply": "Please send a message."}
 
+    user_lang = detect_user_language(msg)
     target_loc = extract_location(msg)
     coords = get_location_coordinates(target_loc)
 
@@ -236,7 +273,7 @@ def chat(payload: UserQuery):
     if not weather_data:
         return {"status": "failed", "reply": "Could not fetch weather data from API."}
 
-    report = generate_report(coords["name"], weather_data)
+    report = generate_report(coords["name"], weather_data, user_lang)
 
     return {
         "status": "success",
