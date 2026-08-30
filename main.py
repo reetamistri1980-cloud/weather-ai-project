@@ -35,10 +35,11 @@ WMO_CODES_EN = {
 }
 
 def detect_user_language(text: str) -> str:
-    # 1. Hinglish Detection Check
+    # 1. Hinglish Keywords Check
     hinglish_keywords = [
         "kaisa", "kaisey", "kya", "batayo", "batao", "bata", "mausam", "kheti", "aaj", "kal",
-        "kab", "baarish", "garmi", "sardi", "fasal", "mitti", "kaisa h", "kaisa hai", "kaisa rahega"
+        "kab", "baarish", "garmi", "sardi", "fasal", "mitti", "kaisa h", "kaisa hai", "kaisa rahega",
+        "hai", "h", "bhi", "par"
     ]
     words = text.lower().split()
     if any(word in hinglish_keywords for word in words):
@@ -78,14 +79,15 @@ def extract_location(text: str) -> str:
             return city
 
     # 3. Regex Match for location extraction
-    match = re.search(r"(?:weather|wheather|wether|temp|mausam|farming|fasal|detail|details|forecast|alert|alerts|climate|আবহাওয়া|আবহাওয়ার|বৃষ্টি|হাওয়া|हवामान|मौसम)\s+(?:in|of|at|near|for|এর|তে|का|की|के)?\s+(.+)", msg_lower, re.IGNORECASE)
+    match = re.search(r"(?:weather|wheather|wether|temp|mausam|farming|fasal|detail|details|forecast|alert|alerts|climate|আবহাওয়া|আবহাওয়ার|বৃষ্টি|হাওয়া|হালকা|हवामान|मौसम)\s+(?:in|of|at|near|for|এর|তে|का|की|के)?\s+(.+)", msg_lower, re.IGNORECASE)
     
     if match:
         loc = match.group(1).strip()
     else:
         loc = msg_lower
 
-    loc = re.sub(r"\b(is|there|any|weather|wheather|wether|temp|mausam|farming|fasal|detail|details|info|show|give|me|forecast|alert|alerts|climate|today|tomorrow|now|right now|please|tell me|pls|আজ|আজকে|এখন|হওয়া|मौसम|हवामान|কেমন|কেমন?|kaisa|hai|kya|batao|batayo)\b", "", loc, flags=re.IGNORECASE).strip()
+    # Clean filler words and Hinglish connectors (ka, ki, ke, kaisa, hai, etc.)
+    loc = re.sub(r"\b(is|there|any|weather|wheather|wether|temp|mausam|farming|fasal|detail|details|info|show|give|me|forecast|alert|alerts|climate|today|tomorrow|now|right now|please|tell me|pls|আজ|আজকে|এখন|হওয়া|मौसम|हवामान|কেমন|কেমন\?|kaisa|kaisey|ha|hai|h|kya|batao|batayo|bata|ka|ki|ke|me|mein|par)\b", "", loc, flags=re.IGNORECASE).strip()
     loc = re.sub(r"[?.!,]+$", "", loc).strip()
     loc = re.sub(r"^[?.!,]+", "", loc).strip()
 
@@ -204,7 +206,7 @@ def generate_report(loc_name: str, data: dict, lang_code: str) -> str:
             f"{forecast_hng}"
         )
 
-    # Base English Template for All Other Languages
+    # Base English Template for Other Languages
     forecast_en = ""
     if daily and "time" in daily:
         dates = daily.get("time", [])[:7]
@@ -236,7 +238,7 @@ def generate_report(loc_name: str, data: dict, lang_code: str) -> str:
     if lang_code == "en":
         return english_report
 
-    # Universal Language Translator (Bengali, Hindi, Marathi, Tamil, Telugu, etc.)
+    # Universal Language Translator (Bengali, Hindi, Marathi, etc.)
     try:
         translated_report = GoogleTranslator(source='en', target=lang_code).translate(english_report)
         return translated_report
