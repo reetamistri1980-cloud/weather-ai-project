@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from deep_translator import GoogleTranslator, single_detection
 
-app = FastAPI(title="All-India Multi-Lingual Hyper-Local Weather AI Chatbot")
+app = FastAPI(title="All-India Multi-Lingual Weather AI Chatbot")
 
 app.add_middleware(
     CORSMiddleware,
@@ -35,15 +35,17 @@ WMO_CODES_EN = {
 }
 
 def detect_user_language(text: str) -> str:
+    if re.search(r'[\u0980-\u09FF]', text):
+        return "bn"
+
+    hinglish_words = ["kaisa", "kaisey", "hai", "kya", "batayo", "batao", "aaj", "kal", "kaise", "bata", "mausam"]
+    if any(w in text.lower().split() for w in hinglish_words):
+        return "hinglish"
+
     try:
-        # Detect language ISO code using deep-translator
         lang = single_detection(text, api_key=None)
         return lang if lang else "en"
     except Exception:
-        # Fallback to Hinglish/English check
-        hinglish_words = ["kaisa", "kaisey", "hai", "kya", "batayo", "batao", "aaj", "kal", "kaise", "bata", "mausam"]
-        if any(w in text.lower().split() for w in hinglish_words):
-            return "hinglish"
         return "en"
 
 def extract_location(text: str) -> str:
@@ -53,13 +55,11 @@ def extract_location(text: str) -> str:
         if re.search(r'\b' + re.escape(landmark) + r'\b', msg):
             return landmark
 
-    # First attempt: English/Hinglish keywords
-    match = re.search(r"(?:weather|wheather|wether|temp|mausam|farming|fasal|detail|details|forecast|alert|alerts|climate)\s+(?:in|of|at|near|for)\s+(.+)", msg, re.IGNORECASE)
+    match = re.search(r"(?:weather|wheather|wether|temp|mausam|farming|fasal|detail|details|forecast|alert|alerts|climate|আবহাওয়া|আবহাওয়ার|বৃষ্টি)\s+(?:in|of|at|near|for|এর|তে)?\s+(.+)", msg, re.IGNORECASE)
     
     if match:
         loc = match.group(1).strip()
     else:
-        # Translate to English to cleanly extract location from non-English scripts
         try:
             translated_text = GoogleTranslator(source='auto', target='en').translate(msg)
             match_trans = re.search(r"(?:weather|temperature|climate|forecast|alert|alerts|farming)\s+(?:in|of|at|near|for)?\s+(.+)", translated_text, re.IGNORECASE)
@@ -67,8 +67,7 @@ def extract_location(text: str) -> str:
         except Exception:
             loc = msg
 
-    # Cleaning noise words
-    loc = re.sub(r"\b(is|there|any|weather|wheather|wether|temp|mausam|farming|fasal|detail|details|info|show|give|me|forecast|alert|alerts|climate|today|tomorrow|now|right now|please|tell me|pls)\b", "", loc, flags=re.IGNORECASE).strip()
+    loc = re.sub(r"\b(is|there|any|weather|wheather|wether|temp|mausam|farming|fasal|detail|details|info|show|give|me|forecast|alert|alerts|climate|today|tomorrow|now|right now|please|tell me|pls|আজ|আজকে|এখন)\b", "", loc, flags=re.IGNORECASE).strip()
     loc = re.sub(r"[?.!,]+$", "", loc).strip()
     loc = re.sub(r"^[?.!,]+", "", loc).strip()
 
@@ -240,11 +239,9 @@ def generate_report(loc_name: str, data: dict, lang_code: str) -> str:
         f"{forecast_text}"
     )
 
-    # Return directly if English or Hinglish
     if lang_code in ["en", "hinglish"]:
         return english_report
 
-    # Translate to User's native Indian language (Tamil, Telugu, Marathi, Bengali, Gujarati, etc.)
     try:
         translated_report = GoogleTranslator(source='en', target=lang_code).translate(english_report)
         return translated_report
