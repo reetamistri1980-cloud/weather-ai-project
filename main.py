@@ -35,13 +35,24 @@ WMO_CODES_EN = {
 }
 
 def detect_user_language(text: str) -> str:
+    # 1. Bengali Script Detection
     if re.search(r'[\u0980-\u09FF]', text):
         return "bn"
 
+    # 2. Devanagari Script (Hindi / Marathi) Detection
+    if re.search(r'[\u0900-\u097F]', text):
+        try:
+            detected = single_detection(text, api_key=None)
+            return detected if detected in ["hi", "mr"] else "hi"
+        except Exception:
+            return "hi"
+
+    # 3. Hinglish (Roman Script Hindi) Check
     hinglish_words = ["kaisa", "kaisey", "hai", "kya", "batayo", "batao", "aaj", "kal", "kaise", "bata", "mausam"]
     if any(w in text.lower().split() for w in hinglish_words):
         return "hinglish"
 
+    # 4. Dynamic Detection for all other global languages (Marathi in Latin script, Gujarati, Tamil, etc.)
     try:
         lang = single_detection(text, api_key=None)
         return lang if lang else "en"
@@ -55,7 +66,7 @@ def extract_location(text: str) -> str:
         if re.search(r'\b' + re.escape(landmark) + r'\b', msg):
             return landmark
 
-    match = re.search(r"(?:weather|wheather|wether|temp|mausam|farming|fasal|detail|details|forecast|alert|alerts|climate|আবহাওয়া|আবহাওয়ার|বৃষ্টি)\s+(?:in|of|at|near|for|এর|তে)?\s+(.+)", msg, re.IGNORECASE)
+    match = re.search(r"(?:weather|wheather|wether|temp|mausam|farming|fasal|detail|details|forecast|alert|alerts|climate|আবহাওয়া|আবহাওয়ার|বৃষ্টি|হালকা|হাওয়া|हवामान|मौसम)\s+(?:in|of|at|near|for|এর|তে|का|की|के)?\s+(.+)", msg, re.IGNORECASE)
     
     if match:
         loc = match.group(1).strip()
@@ -67,7 +78,7 @@ def extract_location(text: str) -> str:
         except Exception:
             loc = msg
 
-    loc = re.sub(r"\b(is|there|any|weather|wheather|wether|temp|mausam|farming|fasal|detail|details|info|show|give|me|forecast|alert|alerts|climate|today|tomorrow|now|right now|please|tell me|pls|আজ|আজকে|এখন)\b", "", loc, flags=re.IGNORECASE).strip()
+    loc = re.sub(r"\b(is|there|any|weather|wheather|wether|temp|mausam|farming|fasal|detail|details|info|show|give|me|forecast|alert|alerts|climate|today|tomorrow|now|right now|please|tell me|pls|আজ|আজকে|এখন|হওয়া|मौसम|हवामान)\b", "", loc, flags=re.IGNORECASE).strip()
     loc = re.sub(r"[?.!,]+$", "", loc).strip()
     loc = re.sub(r"^[?.!,]+", "", loc).strip()
 
@@ -217,6 +228,31 @@ def generate_report(loc_name: str, data: dict, lang_code: str) -> str:
     temp_str = f"{temp}°C" if temp is not None else "N/A"
     feels_str = f"{data['feels_like']}°C" if data['feels_like'] is not None else "N/A"
 
+    # Hinglish Specific Report
+    if lang_code == "hinglish":
+        hinglish_report = (
+            f"📍 **Location:** {loc_name}\n"
+            f"🌤️ **Mausam Ka Haal:** {condition_desc}\n"
+            f"────────────────────────\n"
+            f"🌡️ **Taapman (Temperature):** {temp_str} (Aisa mehsus ho raha hai {feels_str})\n"
+            f"💧 **Hawa Me Nami (Humidity):** {data['humidity']}%\n"
+            f"🌧️ **Baarish (Rainfall):** {data['rain']} mm\n"
+            f"💨 **Hawa Ki Raftar (Wind Speed):** {data['wind']} km/h\n"
+            f"☀️ **UV Index:** {data['uv']} | ⏲️ **Pressure:** {data['pressure']} hPa\n"
+            f"────────────────────────\n"
+            f"🔔 **MAUSAM KI CHEETAVNI (ALERTS):**\n"
+            f"{alert_text}\n"
+            f"────────────────────────\n"
+            f"🧪 **Kheti Aur Fasal Ka Detail:**\n"
+            f"🌱 **Mitti Ka Taapman (0-10cm):** {data['soil_temp']}°C\n"
+            f"💦 **Mitti Ki Nami (0-1cm):** {data['soil_moisture']} m³/m³\n"
+            f"{farming_advice}\n"
+            f"────────────────────────\n"
+            f"🔮 **AAGLE 7 DINO KA FORECAST:**\n"
+            f"{forecast_text}"
+        )
+        return hinglish_report
+
     english_report = (
         f"📍 **Location:** {loc_name}\n"
         f"🌤️ **Condition:** {condition_desc}\n"
@@ -239,7 +275,7 @@ def generate_report(loc_name: str, data: dict, lang_code: str) -> str:
         f"{forecast_text}"
     )
 
-    if lang_code in ["en", "hinglish"]:
+    if lang_code == "en":
         return english_report
 
     try:
@@ -277,3 +313,8 @@ def chat(payload: UserQuery):
         "reply": report,
         "data": weather_data
     }
+
+# Python Code Internal Auto-Reload Settings Added
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=False)
