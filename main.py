@@ -35,11 +35,11 @@ WMO_CODES_EN = {
 }
 
 def detect_user_language(text: str) -> str:
-    # 1. Bengali Script Detection
+    # Bengali Script
     if re.search(r'[\u0980-\u09FF]', text):
         return "bn"
 
-    # 2. Devanagari Script (Hindi / Marathi) Detection
+    # Hindi / Marathi (Devanagari) Script
     if re.search(r'[\u0900-\u097F]', text):
         try:
             detected = single_detection(text, api_key=None)
@@ -47,12 +47,12 @@ def detect_user_language(text: str) -> str:
         except Exception:
             return "hi"
 
-    # 3. Hinglish (Roman Script Hindi) Check
+    # Hinglish Check
     hinglish_words = ["kaisa", "kaisey", "hai", "kya", "batayo", "batao", "aaj", "kal", "kaise", "bata", "mausam"]
     if any(w in text.lower().split() for w in hinglish_words):
         return "hinglish"
 
-    # 4. Dynamic Detection for all other global languages (Marathi in Latin script, Gujarati, Tamil, etc.)
+    # Dynamic global language detection
     try:
         lang = single_detection(text, api_key=None)
         return lang if lang else "en"
@@ -60,25 +60,40 @@ def detect_user_language(text: str) -> str:
         return "en"
 
 def extract_location(text: str) -> str:
-    msg = text.strip().lower()
+    msg = text.strip()
+    msg_lower = msg.lower()
 
+    # 1. Direct Landmark Check
     for landmark in LANDMARK_COORDS:
-        if re.search(r'\b' + re.escape(landmark) + r'\b', msg):
+        if re.search(r'\b' + re.escape(landmark) + r'\b', msg_lower):
             return landmark
 
-    match = re.search(r"(?:weather|wheather|wether|temp|mausam|farming|fasal|detail|details|forecast|alert|alerts|climate|আবহাওয়া|আবহাওয়ার|বৃষ্টি|হালকা|হাওয়া|हवामान|मौसम)\s+(?:in|of|at|near|for|এর|তে|का|की|के)?\s+(.+)", msg, re.IGNORECASE)
+    # 2. Direct script city lookup (Bengali, Hindi, Marathi, etc.)
+    script_city_map = {
+        "দিল্লি": "Delhi", "দিল্লির": "Delhi", "কলকাতা": "Kolkata", "মুম্বাই": "Mumbai",
+        "दिल्ली": "Delhi", "मुंबई": "Mumbai", "कोलकाता": "Kolkata"
+    }
+    for key, city in script_city_map.items():
+        if key in msg:
+            return city
+
+    # 3. Regular expression extraction
+    match = re.search(r"(?:weather|wheather|wether|temp|mausam|farming|fasal|detail|details|forecast|alert|alerts|climate|আবহাওয়া|আবহাওয়ার|বৃষ্টি|হালকা|হাওয়া|हवामान|मौसम)\s+(?:in|of|at|near|for|এর|তে|का|की|के)?\s+(.+)", msg_lower, re.IGNORECASE)
     
     if match:
         loc = match.group(1).strip()
     else:
         try:
-            translated_text = GoogleTranslator(source='auto', target='en').translate(msg)
-            match_trans = re.search(r"(?:weather|temperature|climate|forecast|alert|alerts|farming)\s+(?:in|of|at|near|for)?\s+(.+)", translated_text, re.IGNORECASE)
-            loc = match_trans.group(1).strip() if match_trans else translated_text
+            translated_text = GoogleTranslator(source='auto', target='en').translate(msg_lower)
+            if "error 500" in translated_text.lower() or "that’s an error" in translated_text.lower():
+                loc = "Delhi"
+            else:
+                match_trans = re.search(r"(?:weather|temperature|climate|forecast|alert|alerts|farming)\s+(?:in|of|at|near|for)?\s+(.+)", translated_text, re.IGNORECASE)
+                loc = match_trans.group(1).strip() if match_trans else translated_text
         except Exception:
-            loc = msg
+            loc = msg_lower
 
-    loc = re.sub(r"\b(is|there|any|weather|wheather|wether|temp|mausam|farming|fasal|detail|details|info|show|give|me|forecast|alert|alerts|climate|today|tomorrow|now|right now|please|tell me|pls|আজ|আজকে|এখন|হওয়া|मौसम|हवामान)\b", "", loc, flags=re.IGNORECASE).strip()
+    loc = re.sub(r"\b(is|there|any|weather|wheather|wether|temp|mausam|farming|fasal|detail|details|info|show|give|me|forecast|alert|alerts|climate|today|tomorrow|now|right now|please|tell me|pls|আজ|আজকে|এখন|হওয়া|मौसम|हवामान|কেমন|কেমন?)\b", "", loc, flags=re.IGNORECASE).strip()
     loc = re.sub(r"[?.!,]+$", "", loc).strip()
     loc = re.sub(r"^[?.!,]+", "", loc).strip()
 
@@ -228,7 +243,6 @@ def generate_report(loc_name: str, data: dict, lang_code: str) -> str:
     temp_str = f"{temp}°C" if temp is not None else "N/A"
     feels_str = f"{data['feels_like']}°C" if data['feels_like'] is not None else "N/A"
 
-    # Hinglish Specific Report
     if lang_code == "hinglish":
         hinglish_report = (
             f"📍 **Location:** {loc_name}\n"
@@ -314,7 +328,6 @@ def chat(payload: UserQuery):
         "data": weather_data
     }
 
-# Python Code Internal Auto-Reload Settings Added
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=False)
