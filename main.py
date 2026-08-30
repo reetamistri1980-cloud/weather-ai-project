@@ -87,44 +87,64 @@ def get_location_coordinates(location_name: str):
 
     return None
 
-def fetch_agri_local_and_forecast_weather(lat: float, lon: float):
-    weather_url = "https://api.open-meteo.com/v1/forecast"
-    params = {
+def fetch_weather_and_soil_data(lat: float, lon: float):
+    # Call 1: Standard Current & Forecast Data
+    main_url = "https://api.open-meteo.com/v1/forecast"
+    main_params = {
         "latitude": lat,
         "longitude": lon,
         "current_weather": "true",
-        "hourly": "relative_humidity_2m,apparent_temperature,rain,surface_pressure,uv_index,soil_temperature_0_to_10cm,soil_moisture_0_to_1cm",
-        "daily": "weathercode,temperature_2m_max,temperature_2m_min,precipitation_sum,max_wind_speed_10m",
+        "hourly": "relative_humidity_2m,apparent_temperature,precipitation,surface_pressure,uv_index",
+        "daily": "weathercode,temperature_2m_max,temperature_2m_min",
+        "timezone": "auto"
+    }
+    
+    # Call 2: Agriculture & Soil Data
+    agri_params = {
+        "latitude": lat,
+        "longitude": lon,
+        "hourly": "soil_temperature_0_to_10cm,soil_moisture_0_to_1cm",
         "timezone": "auto"
     }
 
-    res = requests.get(weather_url, params=params, timeout=10).json()
-    curr_weather = res.get("current_weather", {})
-    hourly = res.get("hourly", {})
-    daily = res.get("daily", {})
+    try:
+        main_res = requests.get(main_url, params=main_params, timeout=10).json()
+        agri_res = requests.get(main_url, params=agri_params, timeout=10).json()
+        
+        curr = main_res.get("current_weather", {})
+        main_hourly = main_res.get("hourly", {})
+        agri_hourly = agri_res.get("hourly", {})
+        daily = main_res.get("daily", {})
 
-    # Extract first hourly values as fallbacks for detailed parameters
-    feels_like = hourly.get("apparent_temperature", [None])[0]
-    humidity = hourly.get("relative_humidity_2m", [None])[0]
-    rain = hourly.get("rain", [None])[0]
-    pressure = hourly.get("surface_pressure", [None])[0]
-    uv = hourly.get("uv_index", [None])[0]
-    soil_temp = hourly.get("soil_temperature_0_to_10cm", [None])[0]
-    soil_moisture = hourly.get("soil_moisture_0_to_1cm", [None])[0]
+        # Extract values
+        temp = curr.get("temperature")
+        wind = curr.get("windspeed")
+        code = curr.get("weathercode", 0)
 
-    return {
-        "temp": curr_weather.get("temperature"),
-        "feels_like": feels_like if feels_like is not None else curr_weather.get("temperature"),
-        "humidity": humidity,
-        "rain": rain if rain is not None else 0.0,
-        "wind": curr_weather.get("windspeed"),
-        "pressure": pressure,
-        "uv": uv,
-        "code": curr_weather.get("weathercode", 0),
-        "soil_temp": soil_temp,
-        "soil_moisture": soil_moisture,
-        "daily": daily
-    }
+        humidity = main_hourly.get("relative_humidity_2m", [None])[0]
+        feels_like = main_hourly.get("apparent_temperature", [None])[0]
+        rain = main_hourly.get("precipitation", [None])[0]
+        pressure = main_hourly.get("surface_pressure", [None])[0]
+        uv = main_hourly.get("uv_index", [None])[0]
+
+        soil_temp = agri_hourly.get("soil_temperature_0_to_10cm", [None])[0]
+        soil_moisture = agri_hourly.get("soil_moisture_0_to_1cm", [None])[0]
+
+        return {
+            "temp": temp,
+            "feels_like": feels_like if feels_like is not None else temp,
+            "humidity": humidity,
+            "rain": rain if rain is not None else 0.0,
+            "wind": wind,
+            "pressure": pressure,
+            "uv": uv,
+            "code": code,
+            "soil_temp": soil_temp,
+            "soil_moisture": soil_moisture,
+            "daily": daily
+        }
+    except Exception as e:
+        return None
 
 def generate_report(loc_name: str, data: dict) -> str:
     humidity = data["humidity"] if data["humidity"] is not None else 0
@@ -166,7 +186,7 @@ def generate_report(loc_name: str, data: dict) -> str:
             cond = WMO_CODES.get(codes[i], "Normal")
             forecast_text += f"📅 **{dates[i]}:** Max {max_temps[i]}°C | Min {min_temps[i]}°C ({cond})\n"
 
-    condition_desc = WMO_CODES.get(w_code, "Clear")
+    condition_desc = WMO_CODES.get(w_code, "Clear sky ☀️")
 
     temp_str = f"{temp}°C" if temp is not None else "N/A"
     feels_str = f"{data['feels_like']}°C" if data['feels_like'] is not None else "N/A"
@@ -209,7 +229,11 @@ def chat(payload: UserQuery):
     if not coords:
         return {"status": "failed", "reply": f"Could not find coordinates for '{target_loc}'."}
 
-    weather_data = fetch_agri_local_and_forecast_weather(coords["lat"], coords["lon"])
+    weather_data = fetch_weather_and_soil_data(coords["lat"], coords["lon"])
+    
+    if not weather_data:
+        return {"status": "failed", "reply": "Could not fetch weather data from API."}
+
     report = generate_report(coords["name"], weather_data)
 
     return {
