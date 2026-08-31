@@ -86,7 +86,7 @@ def extract_location(text: str) -> str:
     else:
         loc = msg_lower
 
-    # Clean filler words and Hinglish connectors (ka, ki, ke, kaisa, hai, etc.)
+    # Clean filler words and Hinglish connectors
     loc = re.sub(r"\b(is|there|any|weather|wheather|wether|temp|mausam|farming|fasal|detail|details|info|show|give|me|forecast|alert|alerts|climate|today|tomorrow|now|right now|please|tell me|pls|আজ|আজকে|এখন|হওয়া|मौसम|हवामान|কেমন|কেমন\?|kaisa|kaisey|ha|hai|h|kya|batao|batayo|bata|ka|ki|ke|me|mein|par)\b", "", loc, flags=re.IGNORECASE).strip()
     loc = re.sub(r"[?.!,]+$", "", loc).strip()
     loc = re.sub(r"^[?.!,]+", "", loc).strip()
@@ -165,6 +165,7 @@ def fetch_weather_and_soil_data(lat: float, lon: float):
             "code": curr.get("weathercode", 0),
             "soil_temp": agri_hourly.get("soil_temperature_0_to_10cm", [None])[0],
             "soil_moisture": agri_hourly.get("soil_moisture_0_to_1cm", [None])[0],
+            "hourly": main_hourly,
             "daily": daily
         }
     except Exception:
@@ -238,7 +239,7 @@ def generate_report(loc_name: str, data: dict, lang_code: str) -> str:
     if lang_code == "en":
         return english_report
 
-    # Universal Language Translator (Bengali, Hindi, Marathi, etc.)
+    # Universal Language Translator
     try:
         translated_report = GoogleTranslator(source='en', target=lang_code).translate(english_report)
         return translated_report
