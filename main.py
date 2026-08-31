@@ -36,7 +36,7 @@ WMO_CODES_EN = {
 
 def detect_user_language(text: str) -> str:
     hinglish_keywords = [
-        "kaisa", "kaisey", "kya", "batayo", "batao", "bata", "mausam", "kheti", "aaj", "kal",
+        "kaisa", "kaisey", "kesa", "kese", "kya", "batayo", "batao", "bata", "mausam", "kheti", "aaj", "kal",
         "kab", "baarish", "garmi", "sardi", "fasal", "mitti", "kaisa h", "kaisa hai", "kaisa rahega",
         "hai", "h", "bhi", "par"
     ]
@@ -73,8 +73,8 @@ def extract_location(text: str) -> str:
         if key in text:
             return city
 
-    # 3. Strip Filler Words using Global Regular Expressions
-    filler_words = r"\b(is|there|any|weather|wheather|wether|temp|mausam|farming|fasal|detail|details|info|show|give|me|forecast|alert|alerts|climate|today|tomorrow|now|right now|please|tell me|pls|আজ|আজকে|এখন|হওয়া|मौसम|हवामान|কেমন|কেমন\?|kaisa|kaisey|ha|hai|h|kya|batao|batayo|bata|ka|ki|ke|ko|se|me|mein|par|in|of|at|near|for|es)\b"
+    # 3. Comprehensive Regex to strip all Hinglish question/filler words
+    filler_words = r"\b(is|there|any|weather|wheather|wether|temp|mausam|farming|fasal|detail|details|info|show|give|me|forecast|alert|alerts|climate|today|tomorrow|now|right now|please|tell me|pls|আজ|আজকে|এখন|হওয়া|मौसम|हवामान|কেমন|কেমন\?|kaisa|kaisey|kesa|kese|ha|hai|h|kya|batao|batayo|bata|ka|ki|ke|ko|se|me|mein|par|in|of|at|near|for|es)\b"
     
     clean_msg = re.sub(filler_words, "", msg, flags=re.IGNORECASE)
     clean_msg = re.sub(r"[?.!,]+", " ", clean_msg)
@@ -234,7 +234,7 @@ def generate_report(loc_name: str, data: dict, lang_code: str) -> str:
 
 @app.get("/")
 def home():
-    return {"status": "online", "message": "All-India Multi-Lingual Weather API Ready"}
+    return {"status": "online", "message": "All-India Multi-Lingual Weather AI Chatbot Ready"}
 
 @app.post("/api/chat")
 def chat(payload: UserQuery):
