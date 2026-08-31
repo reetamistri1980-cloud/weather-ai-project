@@ -35,7 +35,6 @@ WMO_CODES_EN = {
 }
 
 def detect_user_language(text: str) -> str:
-    # 1. Hinglish Keywords Check
     hinglish_keywords = [
         "kaisa", "kaisey", "kya", "batayo", "batao", "bata", "mausam", "kheti", "aaj", "kal",
         "kab", "baarish", "garmi", "sardi", "fasal", "mitti", "kaisa h", "kaisa hai", "kaisa rahega",
@@ -45,15 +44,12 @@ def detect_user_language(text: str) -> str:
     if any(word in hinglish_keywords for word in words):
         return "hinglish"
 
-    # 2. Bengali Script Check
     if re.search(r'[\u0980-\u09FF]', text):
         return "bn"
 
-    # 3. Hindi / Devanagari Script Check
     if re.search(r'[\u0900-\u097F]', text):
         return "hi"
 
-    # 4. Automatic Detection for other languages
     try:
         lang = single_detection(text, api_key=None)
         return lang if lang else "en"
@@ -61,37 +57,30 @@ def detect_user_language(text: str) -> str:
         return "en"
 
 def extract_location(text: str) -> str:
-    msg = text.strip()
-    msg_lower = msg.lower()
+    msg = text.strip().lower()
 
-    # 1. Direct Landmark Check
+    # 1. Landmark Check
     for landmark in LANDMARK_COORDS:
-        if re.search(r'\b' + re.escape(landmark) + r'\b', msg_lower):
+        if re.search(r'\b' + re.escape(landmark) + r'\b', msg):
             return landmark
 
-    # 2. Native script city dictionary (Hindi, Bengali, Marathi, etc.)
+    # 2. Native script dictionary
     script_city_map = {
         "দিল্লি": "Delhi", "দিল্লির": "Delhi", "কলকাতা": "Kolkata", "মুম্বাই": "Mumbai",
         "दिल्ली": "Delhi", "मुंबई": "Mumbai", "कोलकाता": "Kolkata", "पटना": "Patna"
     }
     for key, city in script_city_map.items():
-        if key in msg:
+        if key in text:
             return city
 
-    # 3. Regex Match for location extraction
-    match = re.search(r"(?:weather|wheather|wether|temp|mausam|farming|fasal|detail|details|forecast|alert|alerts|climate|আবহাওয়া|আবহাওয়ার|বৃষ্টি|হাওয়া|হালকা|हवामान|मौसम)\s+(?:in|of|at|near|for|এর|তে|का|की|के)?\s+(.+)", msg_lower, re.IGNORECASE)
+    # 3. Strip Filler Words using Global Regular Expressions
+    filler_words = r"\b(is|there|any|weather|wheather|wether|temp|mausam|farming|fasal|detail|details|info|show|give|me|forecast|alert|alerts|climate|today|tomorrow|now|right now|please|tell me|pls|আজ|আজকে|এখন|হওয়া|मौसम|हवामान|কেমন|কেমন\?|kaisa|kaisey|ha|hai|h|kya|batao|batayo|bata|ka|ki|ke|ko|se|me|mein|par|in|of|at|near|for|es)\b"
     
-    if match:
-        loc = match.group(1).strip()
-    else:
-        loc = msg_lower
+    clean_msg = re.sub(filler_words, "", msg, flags=re.IGNORECASE)
+    clean_msg = re.sub(r"[?.!,]+", " ", clean_msg)
+    clean_msg = re.sub(r"\s+", " ", clean_msg).strip()
 
-    # Clean filler words and Hinglish connectors
-    loc = re.sub(r"\b(is|there|any|weather|wheather|wether|temp|mausam|farming|fasal|detail|details|info|show|give|me|forecast|alert|alerts|climate|today|tomorrow|now|right now|please|tell me|pls|আজ|আজকে|এখন|হওয়া|मौसम|हवामान|কেমন|কেমন\?|kaisa|kaisey|ha|hai|h|kya|batao|batayo|bata|ka|ki|ke|me|mein|par)\b", "", loc, flags=re.IGNORECASE).strip()
-    loc = re.sub(r"[?.!,]+$", "", loc).strip()
-    loc = re.sub(r"^[?.!,]+", "", loc).strip()
-
-    return loc if loc else "Delhi"
+    return clean_msg if clean_msg else "Delhi"
 
 def get_location_coordinates(location_name: str):
     loc_lower = location_name.lower().strip()
@@ -177,7 +166,6 @@ def generate_report(loc_name: str, data: dict, lang_code: str) -> str:
     daily = data.get("daily", {})
     condition_desc = WMO_CODES_EN.get(w_code, "Clear sky ☀️")
 
-    # 1. HINGLISH RESPONSE (Roman Hindi)
     if lang_code == "hinglish":
         forecast_hng = ""
         if daily and "time" in daily:
@@ -207,7 +195,6 @@ def generate_report(loc_name: str, data: dict, lang_code: str) -> str:
             f"{forecast_hng}"
         )
 
-    # Base English Template for Other Languages
     forecast_en = ""
     if daily and "time" in daily:
         dates = daily.get("time", [])[:7]
@@ -239,7 +226,6 @@ def generate_report(loc_name: str, data: dict, lang_code: str) -> str:
     if lang_code == "en":
         return english_report
 
-    # Universal Language Translator
     try:
         translated_report = GoogleTranslator(source='en', target=lang_code).translate(english_report)
         return translated_report
