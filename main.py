@@ -114,22 +114,33 @@ def get_location_coordinates(location_name: str):
     return None
 
 def fetch_weather_and_soil_data(lat: float, lon: float):
-    # Direct explicit URL query string for Open-Meteo
-    weather_url = (
-        f"https://api.open-meteo.com/v1/forecast?"
-        f"latitude={lat}&longitude={lon}"
-        f"&current_weather=true"
-        f"&hourly=temperature_2m,relativehumidity_2m,apparent_temperature,precipitation,surface_pressure,uv_index,soil_temperature_0_to_10cm,soil_moisture_0_to_1cm"
-        f"&daily=weathercode,temperature_2m_max,temperature_2m_min"
-        f"&timezone=auto"
-    )
+    # 1. Guaranteed Weather & Daily 7-Day Forecast API
+    weather_url = "https://api.open-meteo.com/v1/forecast"
+    weather_params = {
+        "latitude": lat,
+        "longitude": lon,
+        "current_weather": True,
+        "hourly": ["temperature_2m", "relativehumidity_2m", "apparent_temperature", "precipitation", "surface_pressure", "uv_index"],
+        "daily": ["weathercode", "temperature_2m_max", "temperature_2m_min"],
+        "timezone": "auto"
+    }
+
+    # 2. Agricultural & Soil Data API
+    soil_params = {
+        "latitude": lat,
+        "longitude": lon,
+        "hourly": ["soil_temperature_0_to_10cm", "soil_moisture_0_to_1cm"],
+        "timezone": "auto"
+    }
 
     try:
-        res = requests.get(weather_url, timeout=10).json()
-        
+        res = requests.get(weather_url, params=weather_params, timeout=10).json()
+        soil_res = requests.get(weather_url, params=soil_params, timeout=10).json()
+
         curr = res.get("current_weather", {})
         hourly = res.get("hourly", {})
         daily = res.get("daily", {})
+        soil_hourly = soil_res.get("hourly", {})
 
         def extract_first_valid(arr, default_val):
             if isinstance(arr, list):
@@ -147,8 +158,8 @@ def fetch_weather_and_soil_data(lat: float, lon: float):
         uv = extract_first_valid(hourly.get("uv_index"), 4.0)
         w_code = curr.get("weathercode", 0)
 
-        soil_temp = extract_first_valid(hourly.get("soil_temperature_0_to_10cm"), temp)
-        soil_moisture = extract_first_valid(hourly.get("soil_moisture_0_to_1cm"), 0.25)
+        soil_temp = extract_first_valid(soil_hourly.get("soil_temperature_0_to_10cm"), temp)
+        soil_moisture = extract_first_valid(soil_hourly.get("soil_moisture_0_to_1cm"), 0.25)
 
         return {
             "temp": temp,
@@ -176,7 +187,7 @@ def generate_report(loc_name: str, data: dict, lang_code: str) -> str:
 
     # Build 7-Day Forecast Output
     forecast_lines = []
-    if daily and "time" in daily:
+    if daily and isinstance(daily.get("time"), list):
         dates = daily.get("time", [])
         max_t = daily.get("temperature_2m_max", [])
         min_t = daily.get("temperature_2m_min", [])
@@ -207,7 +218,7 @@ def generate_report(loc_name: str, data: dict, lang_code: str) -> str:
             f"💦 **Mitti Ki Nami (0-1cm):** {data['soil_moisture']} m³/m³\n"
             f"────────────────────────\n"
             f"🔮 **AAGLE 7 DINO KA FORECAST:**\n"
-            f"{forecast_str}"
+            f"\n{forecast_str}"
         )
 
     english_report = (
@@ -225,7 +236,7 @@ def generate_report(loc_name: str, data: dict, lang_code: str) -> str:
         f"💦 **Soil Moisture (0-1cm):** {data['soil_moisture']} m³/m³\n"
         f"────────────────────────\n"
         f"🔮 **7-DAY WEATHER FORECAST:**\n"
-        f"{forecast_str}"
+        f"\n{forecast_str}"
     )
 
     if lang_code == "en":
