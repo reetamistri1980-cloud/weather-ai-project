@@ -26,7 +26,6 @@ class UserQuery(BaseModel):
     message: str
 
 
-# Prevent ambiguous searches such as "Bengal" from resolving to Indonesia.
 INDIA_ALIASES = {
     "up": "Uttar Pradesh, India",
     "u.p.": "Uttar Pradesh, India",
@@ -279,27 +278,30 @@ def geocode(location: str) -> Optional[Dict[str, Any]]:
 
 
 def fetch_weather(latitude: float, longitude: float) -> Optional[Dict[str, Any]]:
-    # Built explicit string URL to prevent request parameter formatting issues with Open-Meteo
+    url = "https://api.open-meteo.com/v1/forecast"
+
     current_vars = "temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,rain,weather_code,surface_pressure,wind_speed_10m,wind_direction_10m,uv_index,is_day"
     hourly_vars = "temperature_2m,relative_humidity_2m,apparent_temperature,precipitation_probability,precipitation,rain,weather_code,surface_pressure,wind_speed_10m,wind_direction_10m,uv_index,soil_temperature_0_to_10cm,soil_moisture_0_to_1cm"
     daily_vars = "weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,wind_speed_10m_max,sunrise,sunset,uv_index_max"
 
-    url = (
-        f"https://api.open-meteo.com/v1/forecast?"
-        f"latitude={latitude}&longitude={longitude}"
-        f"&current={current_vars}"
-        f"&hourly={hourly_vars}"
-        f"&daily={daily_vars}"
-        f"&forecast_days=7"
-        f"&timezone=auto"
-    )
+    params = {
+        "latitude": latitude,
+        "longitude": longitude,
+        "current": current_vars,
+        "hourly": hourly_vars,
+        "daily": daily_vars,
+        "forecast_days": 7,
+        "timezone": "auto",
+    }
 
     try:
-        response = requests.get(url, timeout=15)
-        response.raise_for_status()
+        response = requests.get(url, params=params, timeout=12)
+        if response.status_code != 200:
+            print(f"Open-Meteo Error [{response.status_code}]: {response.text}")
+            return None
         return response.json()
-    except (requests.RequestException, ValueError) as exc:
-        print("Weather API error:", exc)
+    except requests.RequestException as exc:
+        print("Weather API Connection Error:", str(exc))
         return None
 
 
