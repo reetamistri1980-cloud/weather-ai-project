@@ -118,12 +118,12 @@ def get_location_coordinates(location_name: str):
 
 def fetch_weather_and_soil_data(lat: float, lon: float):
     main_url = "https://api.open-meteo.com/v1/forecast"
-    # Exact Open-Meteo V1 Variable Schema
+    # Strict Open-Meteo standard parameters
     params = {
         "latitude": lat,
         "longitude": lon,
         "current_weather": "true",
-        "hourly": "temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,surface_pressure,uv_index,soil_temperature_0cm,soil_moisture_0_to_1cm",
+        "hourly": "temperature_2m,relativehumidity_2m,apparent_temperature,precipitation,surface_pressure,uv_index,soil_temperature_0_to_10cm,soil_moisture_0_to_1cm",
         "daily": "weathercode,temperature_2m_max,temperature_2m_min",
         "timezone": "auto"
     }
@@ -135,24 +135,24 @@ def fetch_weather_and_soil_data(lat: float, lon: float):
         hourly = res.get("hourly", {})
         daily = res.get("daily", {})
 
-        def get_val(key_name, fallback=0):
-            arr = hourly.get(key_name, [])
-            for v in arr:
-                if v is not None:
-                    return v
-            return fallback
+        def extract_first_valid(arr, default_val):
+            if isinstance(arr, list):
+                for v in arr:
+                    if v is not None:
+                        return v
+            return default_val
 
-        temp = curr.get("temperature", get_val("temperature_2m", 28.0))
-        feels_like = get_val("apparent_temperature", temp)
-        humidity = get_val("relative_humidity_2m", 50)
-        rain = get_val("precipitation", 0.0)
-        wind = curr.get("windspeed", 10.0)
-        pressure = get_val("surface_pressure", 1013)
-        uv = get_val("uv_index", 5.0)
+        temp = curr.get("temperature", extract_first_valid(hourly.get("temperature_2m"), 25.0))
+        feels_like = extract_first_valid(hourly.get("apparent_temperature"), temp)
+        humidity = extract_first_valid(hourly.get("relativehumidity_2m"), 50)
+        rain = extract_first_valid(hourly.get("precipitation"), 0.0)
+        wind = curr.get("windspeed", 8.0)
+        pressure = extract_first_valid(hourly.get("surface_pressure"), 1012)
+        uv = extract_first_valid(hourly.get("uv_index"), 4.0)
         w_code = curr.get("weathercode", 0)
 
-        soil_temp = get_val("soil_temperature_0cm", temp)
-        soil_moisture = get_val("soil_moisture_0_to_1cm", 0.25)
+        soil_temp = extract_first_valid(hourly.get("soil_temperature_0_to_10cm"), temp)
+        soil_moisture = extract_first_valid(hourly.get("soil_moisture_0_to_1cm"), 0.22)
 
         return {
             "temp": temp,
@@ -200,7 +200,7 @@ def generate_report(loc_name: str, data: dict, lang_code: str) -> str:
             f"☀️ **UV Index:** {data['uv']} | ⏲️ **Pressure:** {data['pressure']} hPa\n"
             f"────────────────────────\n"
             f"🧪 **Kheti Aur Mitti Ki Jaankari:**\n"
-            f"🌱 **Mitti Ka Taapman (0cm):** {data['soil_temp']}°C\n"
+            f"🌱 **Mitti Ka Taapman (0-10cm):** {data['soil_temp']}°C\n"
             f"💦 **Mitti Ki Nami (0-1cm):** {data['soil_moisture']} m³/m³\n"
             f"────────────────────────\n"
             f"🔮 **AAGLE 7 DINO KA FORECAST:**\n"
@@ -228,7 +228,7 @@ def generate_report(loc_name: str, data: dict, lang_code: str) -> str:
         f"☀️ **UV Index:** {data['uv']} | ⏲️ **Pressure:** {data['pressure']} hPa\n"
         f"────────────────────────\n"
         f"🧪 **Agricultural & Soil Details:**\n"
-        f"🌱 **Soil Temperature (0cm):** {data['soil_temp']}°C\n"
+        f"🌱 **Soil Temperature (0-10cm):** {data['soil_temp']}°C\n"
         f"💦 **Soil Moisture (0-1cm):** {data['soil_moisture']} m³/m³\n"
         f"────────────────────────\n"
         f"🔮 **7-DAY WEATHER FORECAST:**\n"
@@ -276,4 +276,4 @@ def chat(payload: UserQuery):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=False)
+    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=False)s
