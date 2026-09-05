@@ -114,28 +114,26 @@ def get_location_coordinates(location_name: str):
     return None
 
 def fetch_weather_and_soil_data(lat: float, lon: float):
-    # 1. Guaranteed Weather & Daily 7-Day Forecast API
-    weather_url = "https://api.open-meteo.com/v1/forecast"
-    weather_params = {
-        "latitude": lat,
-        "longitude": lon,
-        "current_weather": True,
-        "hourly": ["temperature_2m", "relativehumidity_2m", "apparent_temperature", "precipitation", "surface_pressure", "uv_index"],
-        "daily": ["weathercode", "temperature_2m_max", "temperature_2m_min"],
-        "timezone": "auto"
-    }
+    weather_url = (
+        f"https://api.open-meteo.com/v1/forecast?"
+        f"latitude={lat}&longitude={lon}"
+        f"&current_weather=true"
+        f"&hourly=temperature_2m,relativehumidity_2m,apparent_temperature,precipitation,surface_pressure,uv_index"
+        f"&daily=weathercode,temperature_2m_max,temperature_2m_min"
+        f"&forecast_days=7"
+        f"&timezone=auto"
+    )
 
-    # 2. Agricultural & Soil Data API
-    soil_params = {
-        "latitude": lat,
-        "longitude": lon,
-        "hourly": ["soil_temperature_0_to_10cm", "soil_moisture_0_to_1cm"],
-        "timezone": "auto"
-    }
+    soil_url = (
+        f"https://api.open-meteo.com/v1/forecast?"
+        f"latitude={lat}&longitude={lon}"
+        f"&hourly=soil_temperature_0_to_10cm,soil_moisture_0_to_1cm"
+        f"&timezone=auto"
+    )
 
     try:
-        res = requests.get(weather_url, params=weather_params, timeout=10).json()
-        soil_res = requests.get(weather_url, params=soil_params, timeout=10).json()
+        res = requests.get(weather_url, timeout=10).json()
+        soil_res = requests.get(soil_url, timeout=10).json()
 
         curr = res.get("current_weather", {})
         hourly = res.get("hourly", {})
