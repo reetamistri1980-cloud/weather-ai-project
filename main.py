@@ -203,7 +203,6 @@ def extract_location(text: str) -> str:
     if match:
         return clean_candidate(match.group(1)) or "Delhi"
 
-    # If the user typed only a location, accept the whole phrase.
     filler = re.sub(r"\b(please|pls|tell|me|show|give|weather|temperature|forecast|mausam|mosam)\b", "", raw, flags=re.I)
     filler = re.sub(r"\s+", " ", filler).strip()
     return clean_candidate(filler) or "Delhi"
@@ -280,31 +279,23 @@ def geocode(location: str) -> Optional[Dict[str, Any]]:
 
 
 def fetch_weather(latitude: float, longitude: float) -> Optional[Dict[str, Any]]:
-    url = "https://api.open-meteo.com/v1/forecast"
-    params = {
-        "latitude": latitude,
-        "longitude": longitude,
-        "current": ",".join([
-            "temperature_2m", "relative_humidity_2m", "apparent_temperature",
-            "precipitation", "rain", "weather_code", "surface_pressure",
-            "wind_speed_10m", "wind_direction_10m", "uv_index", "is_day",
-        ]),
-        "hourly": ",".join([
-            "temperature_2m", "relative_humidity_2m", "apparent_temperature",
-            "precipitation_probability", "precipitation", "rain", "weather_code",
-            "surface_pressure", "wind_speed_10m", "wind_direction_10m", "uv_index",
-            "soil_temperature_0_to_10cm", "soil_moisture_0_to_1cm",
-        ]),
-        "daily": ",".join([
-            "weather_code", "temperature_2m_max", "temperature_2m_min",
-            "precipitation_sum", "precipitation_probability_max", "wind_speed_10m_max",
-            "sunrise", "sunset", "uv_index_max",
-        ]),
-        "forecast_days": 7,
-        "timezone": "auto",
-    }
+    # Built explicit string URL to prevent request parameter formatting issues with Open-Meteo
+    current_vars = "temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,rain,weather_code,surface_pressure,wind_speed_10m,wind_direction_10m,uv_index,is_day"
+    hourly_vars = "temperature_2m,relative_humidity_2m,apparent_temperature,precipitation_probability,precipitation,rain,weather_code,surface_pressure,wind_speed_10m,wind_direction_10m,uv_index,soil_temperature_0_to_10cm,soil_moisture_0_to_1cm"
+    daily_vars = "weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,wind_speed_10m_max,sunrise,sunset,uv_index_max"
+
+    url = (
+        f"https://api.open-meteo.com/v1/forecast?"
+        f"latitude={latitude}&longitude={longitude}"
+        f"&current={current_vars}"
+        f"&hourly={hourly_vars}"
+        f"&daily={daily_vars}"
+        f"&forecast_days=7"
+        f"&timezone=auto"
+    )
+
     try:
-        response = requests.get(url, params=params, timeout=15)
+        response = requests.get(url, timeout=15)
         response.raise_for_status()
         return response.json()
     except (requests.RequestException, ValueError) as exc:
@@ -353,7 +344,8 @@ def forecast_7_days(daily: Dict[str, Any]) -> List[Dict[str, Any]]:
         for output_name, source_name in fields.items():
             values = list_value(daily, source_name)
             row[output_name] = values[i] if i < len(values) else None
-        row["condition"] = WMO.get(row["weather_code"], "Unknown")
+        code_val = row["weather_code"] if row["weather_code"] is not None else 0
+        row["condition"] = WMO.get(code_val, "Clear sky ☀️")
         rows.append(row)
     return rows
 
@@ -371,14 +363,14 @@ def make_report(location: Dict[str, Any], payload: Dict[str, Any], language: str
     current = payload.get("current", {})
     hourly = payload.get("hourly", {})
     daily = payload.get("daily", {})
-    code = current.get("weather_code")
-    condition = WMO.get(code, "Unknown")
+    code = current.get("weather_code", 0)
+    condition = WMO.get(code, "Clear sky ☀️")
 
     first_24 = next_24_hours(hourly, current.get("time"))
     seven_days = forecast_7_days(daily)
 
-    soil_temp = first_24[0].get("soil_temperature_0_to_10cm") if first_24 else None
-    soil_moisture = first_24[0].get("soil_moisture_0_to_1cm") if first_24 else None
+    soil_temp = first_24[0].get("soil_temperature_0_to_10cm") if first_24 else "N/A"
+    soil_moisture = first_24[0].get("soil_moisture_0_to_1cm") if first_24 else "N/A"
 
     lines = [
         f"📍 Location: {location['name']}",
@@ -398,36 +390,25 @@ def make_report(location: Dict[str, Any], payload: Dict[str, Any], language: str
         f"Soil temperature (0-10 cm): {soil_temp}°C",
         f"Soil moisture (0-1 cm): {soil_moisture} m³/m³",
         "",
-        "🕐 NEXT 24 HOURS:",
+        "🔮 7-DAY FORECAST:",
     ]
 
-    for row in first_24:
-        lines.append(
-            f"{row['time']} | {row['temperature_2m']}°C | "
-            f"{WMO.get(row['weather_code'], 'Unknown')} | "
-            f"Rain chance: {row['precipitation_probability']}% | Rain: {row['rain']} mm"
-        )
-
-    lines.append("")
-    lines.append("🔮 7-DAY FORECAST:")
     for day in seven_days:
         lines.append(
-            f"{day['date']} | Max {day['max_temperature']}°C | "
+            f"📅 {day['date']} | Max {day['max_temperature']}°C | "
             f"Min {day['min_temperature']}°C | {day['condition']} | "
-            f"Rain chance {day['rain_probability']}%"
+            f"Rain chance: {day['rain_probability']}%"
         )
 
     english = "\n".join(lines)
     if language == "hinglish":
-        # Keep data labels understandable while avoiding unreliable machine translation.
         english = english.replace("Location", "Jagah").replace("Condition", "Mausam")
         english = english.replace("Temperature", "Taapman").replace("Humidity", "Nami")
         english = english.replace("Rain", "Baarish").replace("Wind", "Hawa")
-        english = english.replace("Agriculture & Soil Data", "Kheti aur Mitti ki Jaankari")
+        english = english.replace("AGRICULTURE & SOIL DATA", "KHETI AUR MITTI KI JAANKARI")
         english = english.replace("Soil temperature", "Mitti ka temperature")
         english = english.replace("Soil moisture", "Mitti ki nami")
-        english = english.replace("NEXT 24 HOURS", "AGLE 24 GHANTE")
-        english = english.replace("7-DAY FORECAST", "AGLE 7 DIN KA FORECAST")
+        english = english.replace("7-DAY FORECAST", "AGLE 7 DINO KA FORECAST")
         return english
     return translate_report(english, language)
 
