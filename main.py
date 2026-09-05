@@ -59,12 +59,10 @@ def detect_user_language(text: str) -> str:
 def extract_location(text: str) -> str:
     msg = text.strip().lower()
 
-    # 1. Landmark Check
     for landmark in LANDMARK_COORDS:
         if re.search(r'\b' + re.escape(landmark) + r'\b', msg):
             return landmark
 
-    # 2. Native script dictionary
     script_city_map = {
         "দিল্লি": "Delhi", "দিল্লির": "Delhi", "কলকাতা": "Kolkata", "মুম্বাই": "Mumbai",
         "दिल्ली": "Delhi", "मुंबई": "Mumbai", "कोलकाता": "Kolkata", "पटना": "Patna"
@@ -73,7 +71,6 @@ def extract_location(text: str) -> str:
         if key in text:
             return city
 
-    # 3. Clean filler and question words
     filler_words = r"\b(is|there|any|weather|wheather|wether|temp|mausam|farming|fasal|detail|details|info|show|give|me|forecast|alert|alerts|climate|today|tomorrow|now|right now|please|tell me|pls|আজ|আজকে|এখন|হওয়া|मौसम|हवामान|কেমন|কেমন\?|kaisa|kaisey|kesa|kese|ha|hai|h|kya|batao|batayo|bata|ka|ki|ke|ko|se|me|mein|par|in|of|at|near|for|es)\b"
     
     clean_msg = re.sub(filler_words, "", msg, flags=re.IGNORECASE)
@@ -118,7 +115,6 @@ def get_location_coordinates(location_name: str):
 
 def fetch_weather_and_soil_data(lat: float, lon: float):
     main_url = "https://api.open-meteo.com/v1/forecast"
-    # Strict Open-Meteo standard parameters
     params = {
         "latitude": lat,
         "longitude": lon,
@@ -135,24 +131,24 @@ def fetch_weather_and_soil_data(lat: float, lon: float):
         hourly = res.get("hourly", {})
         daily = res.get("daily", {})
 
-        def extract_first_valid(arr, default_val):
+        def extract_val(arr, default_val):
             if isinstance(arr, list):
                 for v in arr:
                     if v is not None:
                         return v
             return default_val
 
-        temp = curr.get("temperature", extract_first_valid(hourly.get("temperature_2m"), 25.0))
-        feels_like = extract_first_valid(hourly.get("apparent_temperature"), temp)
-        humidity = extract_first_valid(hourly.get("relativehumidity_2m"), 50)
-        rain = extract_first_valid(hourly.get("precipitation"), 0.0)
+        temp = curr.get("temperature", extract_val(hourly.get("temperature_2m"), 25.0))
+        feels_like = extract_val(hourly.get("apparent_temperature"), temp)
+        humidity = extract_val(hourly.get("relativehumidity_2m"), 50)
+        rain = extract_val(hourly.get("precipitation"), 0.0)
         wind = curr.get("windspeed", 8.0)
-        pressure = extract_first_valid(hourly.get("surface_pressure"), 1012)
-        uv = extract_first_valid(hourly.get("uv_index"), 4.0)
+        pressure = extract_val(hourly.get("surface_pressure"), 1012)
+        uv = extract_val(hourly.get("uv_index"), 4.0)
         w_code = curr.get("weathercode", 0)
 
-        soil_temp = extract_first_valid(hourly.get("soil_temperature_0_to_10cm"), temp)
-        soil_moisture = extract_first_valid(hourly.get("soil_moisture_0_to_1cm"), 0.22)
+        soil_temp = extract_val(hourly.get("soil_temperature_0_to_10cm"), temp)
+        soil_moisture = extract_val(hourly.get("soil_moisture_0_to_1cm"), 0.22)
 
         return {
             "temp": temp,
@@ -276,4 +272,4 @@ def chat(payload: UserQuery):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=False)s
+    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=False)
