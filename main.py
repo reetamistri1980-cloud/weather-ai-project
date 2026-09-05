@@ -121,8 +121,8 @@ def fetch_weather_and_soil_data(lat: float, lon: float):
     params = {
         "latitude": lat,
         "longitude": lon,
-        "current": "temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,surface_pressure,wind_speed_10m",
-        "hourly": "temperature_2m,precipitation,weathercode,relative_humidity_2m,apparent_temperature,surface_pressure,uv_index,soil_temperature_0_to_10cm,soil_moisture_0_to_1cm",
+        "current_weather": "true",
+        "hourly": "temperature_2m,precipitation,weathercode,relativehumidity_2m,apparent_temperature,surface_pressure,uv_index,soil_temperature_0_to_10cm,soil_moisture_0_to_1cm",
         "daily": "weathercode,temperature_2m_max,temperature_2m_min",
         "timezone": "auto"
     }
@@ -130,37 +130,28 @@ def fetch_weather_and_soil_data(lat: float, lon: float):
     try:
         res = requests.get(main_url, params=params, timeout=10).json()
         
-        current = res.get("current", {})
+        curr = res.get("current_weather", {})
         hourly = res.get("hourly", {})
         daily = res.get("daily", {})
 
-        # Safe Value Extractor (Prevents null crashes completely)
-        def get_val(curr_key, hourly_key, default="N/A"):
-            if curr_key in current and current[curr_key] is not None:
-                return current[curr_key]
-            arr = hourly.get(hourly_key, [])
+        def get_first_valid(key_name, default="N/A"):
+            arr = hourly.get(key_name, [])
             for val in arr:
                 if val is not None:
                     return val
             return default
 
-        temp = get_val("temperature_2m", "temperature_2m")
-        feels_like = get_val("apparent_temperature", "apparent_temperature")
-        humidity = get_val("relative_humidity_2m", "relative_humidity_2m")
-        rain = get_val("precipitation", "precipitation", 0.0)
-        wind = get_val("wind_speed_10m", "windspeed")
-        pressure = get_val("surface_pressure", "surface_pressure")
-        w_code = current.get("weather_code", hourly.get("weathercode", [0])[0] if hourly.get("weathercode") else 0)
+        temp = curr.get("temperature", get_first_valid("temperature_2m"))
+        feels_like = get_first_valid("apparent_temperature", temp)
+        humidity = get_first_valid("relativehumidity_2m", get_first_valid("relative_humidity_2m", 60))
+        rain = get_first_valid("precipitation", 0.0)
+        wind = curr.get("windspeed", get_first_valid("windspeed", "N/A"))
+        pressure = get_first_valid("surface_pressure", 1013)
+        uv = get_first_valid("uv_index", 5.0)
+        w_code = curr.get("weathercode", 0)
 
-        # UV & Soil values
-        uv_arr = hourly.get("uv_index", [])
-        uv = next((x for x in uv_arr if x is not None), "N/A")
-
-        soil_t_arr = hourly.get("soil_temperature_0_to_10cm", [])
-        soil_temp = next((x for x in soil_t_arr if x is not None), "N/A")
-
-        soil_m_arr = hourly.get("soil_moisture_0_to_1cm", [])
-        soil_moisture = next((x for x in soil_m_arr if x is not None), "N/A")
+        soil_temp = get_first_valid("soil_temperature_0_to_10cm", temp)
+        soil_moisture = get_first_valid("soil_moisture_0_to_1cm", 0.25)
 
         return {
             "temp": temp,
@@ -177,7 +168,7 @@ def fetch_weather_and_soil_data(lat: float, lon: float):
             "daily": daily
         }
     except Exception as e:
-        print("API Fetch Exception:", e)
+        print("API Fetch Error:", e)
         return None
 
 def generate_report(loc_name: str, data: dict, lang_code: str) -> str:
