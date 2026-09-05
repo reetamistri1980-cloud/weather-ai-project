@@ -114,43 +114,53 @@ def get_location_coordinates(location_name: str):
     return None
 
 def fetch_weather_and_soil_data(lat: float, lon: float):
+    # 1. Main Weather API Request (Current + Hourly + 7-Day Daily)
     main_url = "https://api.open-meteo.com/v1/forecast"
-    # Updated Open-Meteo Query Params
-    params = {
+    weather_params = {
         "latitude": lat,
         "longitude": lon,
-        "current": "temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,surface_pressure,wind_speed_10m",
-        "hourly": "temperature_2m,relative_humidity_2m,precipitation,weather_code,uv_index,soil_temperature_0_to_10cm,soil_moisture_0_to_1cm",
-        "daily": "weather_code,temperature_2m_max,temperature_2m_min",
+        "current_weather": "true",
+        "hourly": "temperature_2m,relativehumidity_2m,apparent_temperature,precipitation,surface_pressure,uv_index",
+        "daily": "weathercode,temperature_2m_max,temperature_2m_min",
         "forecast_days": 7,
         "timezone": "auto"
     }
 
     try:
-        res = requests.get(main_url, params=params, timeout=10).json()
+        res = requests.get(main_url, params=weather_params, timeout=10).json()
         
-        curr = res.get("current", {})
+        curr = res.get("current_weather", {})
         hourly = res.get("hourly", {})
         daily = res.get("daily", {})
 
-        def get_valid_val(source_list, fallback=0):
-            if isinstance(source_list, list):
-                for v in source_list:
+        def extract_first_valid(arr, default_val):
+            if isinstance(arr, list):
+                for v in arr:
                     if v is not None:
                         return v
-            return fallback
+            return default_val
 
-        temp = curr.get("temperature_2m", get_valid_val(hourly.get("temperature_2m"), 25.0))
-        feels_like = curr.get("apparent_temperature", temp)
-        humidity = curr.get("relative_humidity_2m", get_valid_val(hourly.get("relative_humidity_2m"), 50))
-        rain = curr.get("precipitation", get_valid_val(hourly.get("precipitation"), 0.0))
-        wind = curr.get("wind_speed_10m", 10.0)
-        pressure = curr.get("surface_pressure", 1012.0)
-        w_code = curr.get("weather_code", 0)
+        temp = curr.get("temperature", extract_first_valid(hourly.get("temperature_2m"), 25.0))
+        feels_like = extract_first_valid(hourly.get("apparent_temperature"), temp)
+        humidity = extract_first_valid(hourly.get("relativehumidity_2m"), 50)
+        rain = extract_first_valid(hourly.get("precipitation"), 0.0)
+        wind = curr.get("windspeed", 8.0)
+        pressure = extract_first_valid(hourly.get("surface_pressure"), 1012)
+        uv = extract_first_valid(hourly.get("uv_index"), 4.0)
+        w_code = curr.get("weathercode", 0)
 
-        uv = get_valid_val(hourly.get("uv_index"), 5.0)
-        soil_temp = get_valid_val(hourly.get("soil_temperature_0_to_10cm"), temp)
-        soil_moisture = get_valid_val(hourly.get("soil_moisture_0_to_1cm"), 0.25)
+        # 2. Agricultural Soil API Fetch
+        soil_params = {
+            "latitude": lat,
+            "longitude": lon,
+            "hourly": "soil_temperature_0_to_10cm,soil_moisture_0_to_1cm",
+            "timezone": "auto"
+        }
+        soil_res = requests.get(main_url, params=soil_params, timeout=8).json()
+        soil_hourly = soil_res.get("hourly", {})
+
+        soil_temp = extract_first_valid(soil_hourly.get("soil_temperature_0_to_10cm"), temp)
+        soil_moisture = extract_first_valid(soil_hourly.get("soil_moisture_0_to_1cm"), 0.25)
 
         return {
             "temp": temp,
@@ -176,19 +186,20 @@ def generate_report(loc_name: str, data: dict, lang_code: str) -> str:
     daily = data.get("daily", {})
     condition_desc = WMO_CODES_EN.get(w_code, "Clear sky ☀️")
 
-    # Build 7-day forecast block
+    # Build 7-Day Forecast Output
     forecast_lines = []
     if daily and "time" in daily:
         dates = daily.get("time", [])
         max_t = daily.get("temperature_2m_max", [])
         min_t = daily.get("temperature_2m_min", [])
-        codes = daily.get("weather_code", [])
+        codes = daily.get("weathercode", [])
+        
         for i in range(min(7, len(dates))):
             code_val = codes[i] if i < len(codes) else 0
-            c = WMO_CODES_EN.get(code_val, "Normal")
+            c_desc = WMO_CODES_EN.get(code_val, "Normal")
             max_val = max_t[i] if i < len(max_t) else "N/A"
             min_val = min_t[i] if i < len(min_t) else "N/A"
-            forecast_lines.append(f"📅 **{dates[i]}:** Max {max_val}°C | Min {min_val}°C ({c})")
+            forecast_lines.append(f"📅 **{dates[i]}:** Max {max_val}°C | Min {min_val}°C ({c_desc})")
 
     forecast_str = "\n".join(forecast_lines) if forecast_lines else "Forecast unavailable."
 
