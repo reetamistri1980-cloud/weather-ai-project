@@ -73,7 +73,7 @@ def extract_location(text: str) -> str:
         if key in text:
             return city
 
-    # 3. Clean all Hinglish & question words (including spelling variations like kesa, kese, etc.)
+    # 3. Clean filler and question words
     filler_words = r"\b(is|there|any|weather|wheather|wether|temp|mausam|farming|fasal|detail|details|info|show|give|me|forecast|alert|alerts|climate|today|tomorrow|now|right now|please|tell me|pls|আজ|আজকে|এখন|হওয়া|मौसम|हवामान|কেমন|কেমন\?|kaisa|kaisey|kesa|kese|ha|hai|h|kya|batao|batayo|bata|ka|ki|ke|ko|se|me|mein|par|in|of|at|near|for|es)\b"
     
     clean_msg = re.sub(filler_words, "", msg, flags=re.IGNORECASE)
@@ -117,12 +117,11 @@ def get_location_coordinates(location_name: str):
     return None
 
 def fetch_weather_and_soil_data(lat: float, lon: float):
-    # Single unified API call to avoid null values and missing params
     main_url = "https://api.open-meteo.com/v1/forecast"
     params = {
         "latitude": lat,
         "longitude": lon,
-        "current_weather": "true",
+        "current": "temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,surface_pressure,wind_speed_10m",
         "hourly": "temperature_2m,precipitation,weathercode,relative_humidity_2m,apparent_temperature,surface_pressure,uv_index,soil_temperature_0_to_10cm,soil_moisture_0_to_1cm",
         "daily": "weathercode,temperature_2m_max,temperature_2m_min",
         "timezone": "auto"
@@ -131,31 +130,54 @@ def fetch_weather_and_soil_data(lat: float, lon: float):
     try:
         res = requests.get(main_url, params=params, timeout=10).json()
         
-        curr = res.get("current_weather", {})
+        current = res.get("current", {})
         hourly = res.get("hourly", {})
         daily = res.get("daily", {})
 
-        # Safe extraction helper to prevent Null crashes
-        def safe_get(key_name, default="N/A"):
-            arr = hourly.get(key_name, [])
-            return arr[0] if arr and arr[0] is not None else default
+        # Safe Value Extractor (Prevents null crashes completely)
+        def get_val(curr_key, hourly_key, default="N/A"):
+            if curr_key in current and current[curr_key] is not None:
+                return current[curr_key]
+            arr = hourly.get(hourly_key, [])
+            for val in arr:
+                if val is not None:
+                    return val
+            return default
+
+        temp = get_val("temperature_2m", "temperature_2m")
+        feels_like = get_val("apparent_temperature", "apparent_temperature")
+        humidity = get_val("relative_humidity_2m", "relative_humidity_2m")
+        rain = get_val("precipitation", "precipitation", 0.0)
+        wind = get_val("wind_speed_10m", "windspeed")
+        pressure = get_val("surface_pressure", "surface_pressure")
+        w_code = current.get("weather_code", hourly.get("weathercode", [0])[0] if hourly.get("weathercode") else 0)
+
+        # UV & Soil values
+        uv_arr = hourly.get("uv_index", [])
+        uv = next((x for x in uv_arr if x is not None), "N/A")
+
+        soil_t_arr = hourly.get("soil_temperature_0_to_10cm", [])
+        soil_temp = next((x for x in soil_t_arr if x is not None), "N/A")
+
+        soil_m_arr = hourly.get("soil_moisture_0_to_1cm", [])
+        soil_moisture = next((x for x in soil_m_arr if x is not None), "N/A")
 
         return {
-            "temp": curr.get("temperature", "N/A"),
-            "feels_like": safe_get("apparent_temperature"),
-            "humidity": safe_get("relative_humidity_2m"),
-            "rain": safe_get("precipitation", 0.0),
-            "wind": curr.get("windspeed", "N/A"),
-            "pressure": safe_get("surface_pressure"),
-            "uv": safe_get("uv_index"),
-            "code": curr.get("weathercode", 0),
-            "soil_temp": safe_get("soil_temperature_0_to_10cm"),
-            "soil_moisture": safe_get("soil_moisture_0_to_1cm"),
+            "temp": temp,
+            "feels_like": feels_like,
+            "humidity": humidity,
+            "rain": rain,
+            "wind": wind,
+            "pressure": pressure,
+            "uv": uv,
+            "code": w_code,
+            "soil_temp": soil_temp,
+            "soil_moisture": soil_moisture,
             "hourly": hourly,
             "daily": daily
         }
     except Exception as e:
-        print("API Fetch Error:", e)
+        print("API Fetch Exception:", e)
         return None
 
 def generate_report(loc_name: str, data: dict, lang_code: str) -> str:
