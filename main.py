@@ -73,7 +73,7 @@ def extract_location(text: str) -> str:
         if key in text:
             return city
 
-    # 3. Comprehensive Regex to strip all Hinglish question/filler words
+    # 3. Clean all Hinglish & question words (including spelling variations like kesa, kese, etc.)
     filler_words = r"\b(is|there|any|weather|wheather|wether|temp|mausam|farming|fasal|detail|details|info|show|give|me|forecast|alert|alerts|climate|today|tomorrow|now|right now|please|tell me|pls|আজ|আজকে|এখন|হওয়া|मौसम|हवामान|কেমন|কেমন\?|kaisa|kaisey|kesa|kese|ha|hai|h|kya|batao|batayo|bata|ka|ki|ke|ko|se|me|mein|par|in|of|at|near|for|es)\b"
     
     clean_msg = re.sub(filler_words, "", msg, flags=re.IGNORECASE)
@@ -117,47 +117,45 @@ def get_location_coordinates(location_name: str):
     return None
 
 def fetch_weather_and_soil_data(lat: float, lon: float):
+    # Single unified API call to avoid null values and missing params
     main_url = "https://api.open-meteo.com/v1/forecast"
-    main_params = {
+    params = {
         "latitude": lat,
         "longitude": lon,
         "current_weather": "true",
-        "hourly": "temperature_2m,precipitation,weathercode,relative_humidity_2m,apparent_temperature,surface_pressure,uv_index",
+        "hourly": "temperature_2m,precipitation,weathercode,relative_humidity_2m,apparent_temperature,surface_pressure,uv_index,soil_temperature_0_to_10cm,soil_moisture_0_to_1cm",
         "daily": "weathercode,temperature_2m_max,temperature_2m_min",
-        "timezone": "auto"
-    }
-    
-    agri_params = {
-        "latitude": lat,
-        "longitude": lon,
-        "hourly": "soil_temperature_0_to_10cm,soil_moisture_0_to_1cm",
         "timezone": "auto"
     }
 
     try:
-        main_res = requests.get(main_url, params=main_params, timeout=10).json()
-        agri_res = requests.get(main_url, params=agri_params, timeout=10).json()
+        res = requests.get(main_url, params=params, timeout=10).json()
         
-        curr = main_res.get("current_weather", {})
-        main_hourly = main_res.get("hourly", {})
-        agri_hourly = agri_res.get("hourly", {})
-        daily = main_res.get("daily", {})
+        curr = res.get("current_weather", {})
+        hourly = res.get("hourly", {})
+        daily = res.get("daily", {})
+
+        # Safe extraction helper to prevent Null crashes
+        def safe_get(key_name, default="N/A"):
+            arr = hourly.get(key_name, [])
+            return arr[0] if arr and arr[0] is not None else default
 
         return {
-            "temp": curr.get("temperature"),
-            "feels_like": main_hourly.get("apparent_temperature", [None])[0],
-            "humidity": main_hourly.get("relative_humidity_2m", [None])[0],
-            "rain": main_hourly.get("precipitation", [None])[0] or 0.0,
-            "wind": curr.get("windspeed"),
-            "pressure": main_hourly.get("surface_pressure", [None])[0],
-            "uv": main_hourly.get("uv_index", [None])[0],
+            "temp": curr.get("temperature", "N/A"),
+            "feels_like": safe_get("apparent_temperature"),
+            "humidity": safe_get("relative_humidity_2m"),
+            "rain": safe_get("precipitation", 0.0),
+            "wind": curr.get("windspeed", "N/A"),
+            "pressure": safe_get("surface_pressure"),
+            "uv": safe_get("uv_index"),
             "code": curr.get("weathercode", 0),
-            "soil_temp": agri_hourly.get("soil_temperature_0_to_10cm", [None])[0],
-            "soil_moisture": agri_hourly.get("soil_moisture_0_to_1cm", [None])[0],
-            "hourly": main_hourly,
+            "soil_temp": safe_get("soil_temperature_0_to_10cm"),
+            "soil_moisture": safe_get("soil_moisture_0_to_1cm"),
+            "hourly": hourly,
             "daily": daily
         }
-    except Exception:
+    except Exception as e:
+        print("API Fetch Error:", e)
         return None
 
 def generate_report(loc_name: str, data: dict, lang_code: str) -> str:
