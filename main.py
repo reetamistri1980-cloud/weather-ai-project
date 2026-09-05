@@ -277,32 +277,28 @@ def geocode(location: str) -> Optional[Dict[str, Any]]:
     }
 
 
-def fetch_weather(latitude: float, longitude: float) -> Optional[Dict[str, Any]]:
-    url = "https://api.open-meteo.com/v1/forecast"
-
-    current_vars = "temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,rain,weather_code,surface_pressure,wind_speed_10m,wind_direction_10m,uv_index,is_day"
-    hourly_vars = "temperature_2m,relative_humidity_2m,apparent_temperature,precipitation_probability,precipitation,rain,weather_code,surface_pressure,wind_speed_10m,wind_direction_10m,uv_index,soil_temperature_0_to_10cm,soil_moisture_0_to_1cm"
-    daily_vars = "weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,wind_speed_10m_max,sunrise,sunset,uv_index_max"
-
-    params = {
-        "latitude": latitude,
-        "longitude": longitude,
-        "current": current_vars,
-        "hourly": hourly_vars,
-        "daily": daily_vars,
-        "forecast_days": 7,
-        "timezone": "auto",
-    }
+def fetch_weather(latitude: float, longitude: float) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
+    # Un-encoded direct URL format to stop parameter encoding issues
+    url = (
+        f"https://api.open-meteo.com/v1/forecast?"
+        f"latitude={latitude}&longitude={longitude}"
+        f"&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,rain,weather_code,surface_pressure,wind_speed_10m,wind_direction_10m,uv_index,is_day"
+        f"&hourly=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation_probability,precipitation,rain,weather_code,surface_pressure,wind_speed_10m,wind_direction_10m,uv_index,soil_temperature_0_to_10cm,soil_moisture_0_to_1cm"
+        f"&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,wind_speed_10m_max,sunrise,sunset,uv_index_max"
+        f"&forecast_days=7&timezone=auto"
+    )
 
     try:
-        response = requests.get(url, params=params, timeout=12)
+        response = requests.get(url, timeout=12)
         if response.status_code != 200:
-            print(f"Open-Meteo Error [{response.status_code}]: {response.text}")
-            return None
-        return response.json()
+            err_msg = f"API Error Code {response.status_code}: {response.text}"
+            print(err_msg)
+            return None, err_msg
+        return response.json(), None
     except requests.RequestException as exc:
-        print("Weather API Connection Error:", str(exc))
-        return None
+        err_msg = f"Network Exception: {str(exc)}"
+        print(err_msg)
+        return None, err_msg
 
 
 def list_value(mapping: Dict[str, Any], key: str) -> List[Any]:
@@ -437,9 +433,13 @@ def chat(payload: UserQuery) -> Dict[str, Any]:
             "data": None,
         }
 
-    weather = fetch_weather(location["latitude"], location["longitude"])
+    weather, err_msg = fetch_weather(location["latitude"], location["longitude"])
     if not weather:
-        return {"status": "failed", "reply": "Could not fetch live weather data right now.", "data": None}
+        return {
+            "status": "failed",
+            "reply": f"Could not fetch live weather data right now. Details: {err_msg}",
+            "data": None,
+        }
 
     first_24 = next_24_hours(weather.get("hourly", {}), weather.get("current", {}).get("time"))
     seven_days = forecast_7_days(weather.get("daily", {}))
