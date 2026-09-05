@@ -114,20 +114,18 @@ def get_location_coordinates(location_name: str):
     return None
 
 def fetch_weather_and_soil_data(lat: float, lon: float):
-    # 1. Main Weather API Request (Current + Hourly + 7-Day Daily)
-    main_url = "https://api.open-meteo.com/v1/forecast"
-    weather_params = {
-        "latitude": lat,
-        "longitude": lon,
-        "current_weather": "true",
-        "hourly": "temperature_2m,relativehumidity_2m,apparent_temperature,precipitation,surface_pressure,uv_index",
-        "daily": "weathercode,temperature_2m_max,temperature_2m_min",
-        "forecast_days": 7,
-        "timezone": "auto"
-    }
+    # Direct explicit URL query string for Open-Meteo
+    weather_url = (
+        f"https://api.open-meteo.com/v1/forecast?"
+        f"latitude={lat}&longitude={lon}"
+        f"&current_weather=true"
+        f"&hourly=temperature_2m,relativehumidity_2m,apparent_temperature,precipitation,surface_pressure,uv_index,soil_temperature_0_to_10cm,soil_moisture_0_to_1cm"
+        f"&daily=weathercode,temperature_2m_max,temperature_2m_min"
+        f"&timezone=auto"
+    )
 
     try:
-        res = requests.get(main_url, params=weather_params, timeout=10).json()
+        res = requests.get(weather_url, timeout=10).json()
         
         curr = res.get("current_weather", {})
         hourly = res.get("hourly", {})
@@ -149,18 +147,8 @@ def fetch_weather_and_soil_data(lat: float, lon: float):
         uv = extract_first_valid(hourly.get("uv_index"), 4.0)
         w_code = curr.get("weathercode", 0)
 
-        # 2. Agricultural Soil API Fetch
-        soil_params = {
-            "latitude": lat,
-            "longitude": lon,
-            "hourly": "soil_temperature_0_to_10cm,soil_moisture_0_to_1cm",
-            "timezone": "auto"
-        }
-        soil_res = requests.get(main_url, params=soil_params, timeout=8).json()
-        soil_hourly = soil_res.get("hourly", {})
-
-        soil_temp = extract_first_valid(soil_hourly.get("soil_temperature_0_to_10cm"), temp)
-        soil_moisture = extract_first_valid(soil_hourly.get("soil_moisture_0_to_1cm"), 0.25)
+        soil_temp = extract_first_valid(hourly.get("soil_temperature_0_to_10cm"), temp)
+        soil_moisture = extract_first_valid(hourly.get("soil_moisture_0_to_1cm"), 0.25)
 
         return {
             "temp": temp,
