@@ -2,7 +2,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 import requests
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -13,7 +13,6 @@ except ImportError:
 
 app = FastAPI(title="All-India Multilingual Real-Time Weather API")
 
-# Wildcard CORS to handle all origins safely
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -279,25 +278,45 @@ def geocode(location: str) -> Optional[Dict[str, Any]]:
 
 
 def fetch_weather(latitude: float, longitude: float) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
-    # Explicit query string mapping for Open-Meteo compatibility
+    # Clear parameter tuple mapping to guarantee Open-Meteo returns hourly data
     endpoint = "https://api.open-meteo.com/v1/forecast"
+    
+    hourly_fields = [
+        "temperature_2m", "relative_humidity_2m", "apparent_temperature",
+        "precipitation_probability", "precipitation", "rain", "weather_code",
+        "surface_pressure", "wind_speed_10m", "wind_direction_10m", "uv_index",
+        "soil_temperature_0_to_10cm", "soil_moisture_0_to_1cm"
+    ]
+    
+    current_fields = [
+        "temperature_2m", "relative_humidity_2m", "apparent_temperature",
+        "precipitation", "rain", "weather_code", "surface_pressure",
+        "wind_speed_10m", "wind_direction_10m", "uv_index", "is_day"
+    ]
+    
+    daily_fields = [
+        "weather_code", "temperature_2m_max", "temperature_2m_min",
+        "precipitation_sum", "precipitation_probability_max",
+        "wind_speed_10m_max", "sunrise", "sunset", "uv_index_max"
+    ]
+
     params = {
         "latitude": latitude,
         "longitude": longitude,
-        "current": "temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,rain,weather_code,surface_pressure,wind_speed_10m,wind_direction_10m,uv_index,is_day",
-        "hourly": "temperature_2m,relative_humidity_2m,apparent_temperature,precipitation_probability,precipitation,rain,weather_code,surface_pressure,wind_speed_10m,wind_direction_10m,uv_index,soil_temperature_0_to_10cm,soil_moisture_0_to_1cm",
-        "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,wind_speed_10m_max,sunrise,sunset,uv_index_max",
+        "current": ",".join(current_fields),
+        "hourly": ",".join(hourly_fields),
+        "daily": ",".join(daily_fields),
         "forecast_days": 7,
         "timezone": "auto"
     }
 
     try:
-        response = requests.get(endpoint, params=params, timeout=10)
+        response = requests.get(endpoint, params=params, timeout=12)
         if response.status_code != 200:
-            return None, f"Open-Meteo HTTP {response.status_code}: {response.text}"
+            return None, f"Open-Meteo Error Code {response.status_code}: {response.text}"
         return response.json(), None
     except requests.RequestException as exc:
-        return None, f"Connection Failed: {str(exc)}"
+        return None, f"Network Request Failed: {str(exc)}"
 
 
 def list_value(mapping: Dict[str, Any], key: str) -> List[Any]:
@@ -307,23 +326,34 @@ def list_value(mapping: Dict[str, Any], key: str) -> List[Any]:
 
 def next_24_hours(hourly: Dict[str, Any], current_time: Optional[str] = None) -> List[Dict[str, Any]]:
     times = list_value(hourly, "time")
+    if not times:
+        return []
+
     start_index = 0
     if current_time and current_time in times:
         start_index = times.index(current_time)
+
     fields = [
         "temperature_2m", "relative_humidity_2m", "apparent_temperature",
         "precipitation_probability", "precipitation", "rain", "weather_code",
         "surface_pressure", "wind_speed_10m", "wind_direction_10m", "uv_index",
         "soil_temperature_0_to_10cm", "soil_moisture_0_to_1cm",
     ]
+    
     rows = []
     selected_times = times[start_index:start_index + 24]
+    
     for i, time_value in enumerate(selected_times, start=start_index):
         row = {"time": time_value}
         for field in fields:
             values = list_value(hourly, field)
             row[field] = values[i] if i < len(values) else None
+        
+        # Add human-readable weather condition label
+        code = row.get("weather_code")
+        row["condition"] = WMO.get(code if code is not None else 0, "Clear sky ☀️")
         rows.append(row)
+        
     return rows
 
 
@@ -387,8 +417,19 @@ def make_report(location: Dict[str, Any], payload: Dict[str, Any], language: str
         f"Soil temperature (0-10 cm): {soil_temp}°C",
         f"Soil moisture (0-1 cm): {soil_moisture} m³/m³",
         "",
-        "🔮 7-DAY FORECAST:",
+        "⏰ HOURLY FORECAST (Next 6 Hours Preview):",
     ]
+
+    # Include hourly preview directly in the text response
+    for hour in first_24[:6]:
+        time_str = hour['time'].split("T")[-1] if "T" in hour['time'] else hour['time']
+        lines.append(
+            f"  • {time_str} -> {hour.get('temperature_2m')}°C | "
+            f"Rain: {hour.get('precipitation_probability')}% | "
+            f"{hour.get('condition')}"
+        )
+
+    lines.extend(["", "🔮 7-DAY FORECAST:"])
 
     for day in seven_days:
         lines.append(
@@ -405,8 +446,10 @@ def make_report(location: Dict[str, Any], payload: Dict[str, Any], language: str
         english = english.replace("AGRICULTURE & SOIL DATA", "KHETI AUR MITTI KI JAANKARI")
         english = english.replace("Soil temperature", "Mitti ka temperature")
         english = english.replace("Soil moisture", "Mitti ki nami")
+        english = english.replace("HOURLY FORECAST (Next 6 Hours Preview)", "AGLE 6 GHANTO KA MAUSAM")
         english = english.replace("7-DAY FORECAST", "AGLE 7 DINO KA FORECAST")
         return english
+
     return translate_report(english, language)
 
 
@@ -440,7 +483,7 @@ async def chat(payload: UserQuery) -> Dict[str, Any]:
             "data": None,
         }
 
-    first_24 = next_24_hours(weather.get("hourly", {}), weather.get("current", {}).get("time"))
+    hourly_24 = next_24_hours(weather.get("hourly", {}), weather.get("current", {}).get("time"))
     seven_days = forecast_7_days(weather.get("daily", {}))
     report = make_report(location, weather, language)
 
@@ -450,7 +493,7 @@ async def chat(payload: UserQuery) -> Dict[str, Any]:
         "location": location,
         "data": {
             "current": weather.get("current", {}),
-            "next_24_hours": first_24,
+            "next_24_hours": hourly_24,
             "seven_day_forecast": seven_days,
             "timezone": weather.get("timezone", "auto"),
         },
