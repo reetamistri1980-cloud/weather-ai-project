@@ -154,7 +154,8 @@ HINGLISH_WORDS = {
     "kaisa", "kaise", "kesa", "kese", "kya", "batao", "btao", "mausam", "mosam",
     "aaj", "kal", "baarish", "barish", "garmi", "sardi", "fasal", "kheti", "mitti",
     "nami", "taapman", "hawa", "rahega", "rahegi", "hai", "hain", "mein", "me", "ka",
-    "ki", "ke", "kab", "kitna", "kitni", "dikhao", "chahiye",
+    "ki", "ke", "kab", "kitna", "kitni", "dikhao", "chahiye", "chhatri", "umbrella",
+    "beta", "bachhe", "kapde", "jana", "jaun", "le", "kar",
 }
 
 
@@ -178,33 +179,40 @@ def clean_candidate(value: str) -> str:
     return value.strip()
 
 
-def extract_location(text: str) -> str:
+def extract_location(text: str) -> Optional[str]:
     raw = norm(text)
+
+    # 1. Direct landmark & Aliases check
+    for key, value in sorted(LANDMARKS.items(), key=lambda x: len(x[0]), reverse=True):
+        if key.lower() in raw:
+            return value["name"]
 
     for key, value in sorted(SCRIPT_ALIASES.items(), key=lambda x: len(x[0]), reverse=True):
         if key.lower() in raw:
             return value
 
+    for key, value in sorted(INDIA_ALIASES.items(), key=lambda x: len(x[0]), reverse=True):
+        if re.search(rf"\b{re.escape(key)}\b", raw, re.I):
+            return value
+
+    # 2. Regex Patterns for explicit queries
     patterns = [
-        r"(?:weather|wheather|wether|temperature|temp|forecast|climate|mausam|mosam|rain|baarish|barish|farming|fasal|kheti)\s+(?:in|of|for|at|near|ka|ki|ke|mein|me|par)\s+(.+)$",
+        r"(?:weather|wheather|wether|temperature|temp|forecast|climate|mausam|mosam|rain|baarish|barish|fasal|kheti)\s+(?:in|of|for|at|near|ka|ki|ke|mein|me|par)\s+(.+)$",
         r"(?:what is|what's|tell me|show me|give me)\s+(?:the\s+)?(?:weather|temperature|forecast|climate)\s+(?:in|of|for|at|near)\s+(.+)$",
     ]
     for pattern in patterns:
         match = re.search(pattern, raw, re.I)
         if match:
-            return clean_candidate(match.group(1)) or "Delhi"
+            extracted = clean_candidate(match.group(1))
+            if extracted:
+                return extracted
 
-    match = re.match(r"^(.+?)\s+(?:weather|wheather|wether|temperature|temp|forecast|climate)$", raw, re.I)
-    if match:
-        return clean_candidate(match.group(1)) or "Delhi"
+    # 3. If input is just a single city name (e.g. "Delhi" or "Lucknow")
+    words = raw.split()
+    if len(words) <= 3 and not any(w in HINGLISH_WORDS for w in words):
+        return raw
 
-    match = re.match(r"^(.+?)\s+(?:ka|ki|ke)\s+(?:mausam|mosam|weather|temperature|temp)$", raw, re.I)
-    if match:
-        return clean_candidate(match.group(1)) or "Delhi"
-
-    filler = re.sub(r"\b(please|pls|tell|me|show|give|weather|temperature|forecast|mausam|mosam)\b", "", raw, flags=re.I)
-    filler = re.sub(r"\s+", " ", filler).strip()
-    return clean_candidate(filler) or "Delhi"
+    return None
 
 
 def geocode(location: str) -> Optional[Dict[str, Any]]:
@@ -278,7 +286,6 @@ def geocode(location: str) -> Optional[Dict[str, Any]]:
 
 
 def fetch_weather(latitude: float, longitude: float) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
-    # Clear parameter tuple mapping to guarantee Open-Meteo returns hourly data
     endpoint = "https://api.open-meteo.com/v1/forecast"
     
     hourly_fields = [
@@ -349,7 +356,6 @@ def next_24_hours(hourly: Dict[str, Any], current_time: Optional[str] = None) ->
             values = list_value(hourly, field)
             row[field] = values[i] if i < len(values) else None
         
-        # Add human-readable weather condition label
         code = row.get("weather_code")
         row["condition"] = WMO.get(code if code is not None else 0, "Clear sky ☀️")
         rows.append(row)
@@ -377,6 +383,33 @@ def forecast_7_days(daily: Dict[str, Any]) -> List[Dict[str, Any]]:
     return rows
 
 
+def generate_general_recommendations(current: Dict[str, Any], daily: Dict[str, Any], hourly_24: List[Dict[str, Any]]) -> Dict[str, Any]:
+    rain_amount = current.get("rain", 0) or 0
+    precip_amount = current.get("precipitation", 0) or 0
+    
+    max_prob_12h = max([h.get("precipitation_probability") or 0 for h in hourly_24[:12]], default=0)
+    today_max_prob = list_value(daily, "precipitation_probability_max")[0] if list_value(daily, "precipitation_probability_max") else 0
+
+    needs_umbrella = (rain_amount > 0.1) or (precip_amount > 0.1) or (max_prob_12h >= 30) or (today_max_prob >= 35)
+
+    if needs_umbrella:
+        umbrella_msg = "☔ YES, UMBRELLA NEEDED! Aaj baarish ke chances hain. Apne saath umbrella/raincoat zaroor rakhein."
+    else:
+        umbrella_msg = "☀️ NO UMBRELLA NEEDED! Aaj mausam saaf rehne ki ummeed hai, baarish ke chances kam hain."
+
+    if needs_umbrella or (current.get("relative_humidity_2m", 0) or 0) > 85:
+        drying_msg = "🏠 Kapde andar hi sukhayein, bahar geele ho sakte hain."
+    else:
+        drying_msg = "👕 Aaj bahar kapde sukhane ke liye achha din hai."
+
+    return {
+        "umbrella_required": needs_umbrella,
+        "umbrella_advice": umbrella_msg,
+        "clothes_drying_advice": drying_msg,
+        "rain_probability_next_12h": f"{max_prob_12h}%",
+    }
+
+
 def translate_report(text: str, language: str) -> str:
     if language in {"en", "hinglish"} or GoogleTranslator is None:
         return text
@@ -395,6 +428,7 @@ def make_report(location: Dict[str, Any], payload: Dict[str, Any], language: str
 
     first_24 = next_24_hours(hourly, current.get("time"))
     seven_days = forecast_7_days(daily)
+    recommendations = generate_general_recommendations(current, daily, first_24)
 
     soil_temp = first_24[0].get("soil_temperature_0_to_10cm") if first_24 else "N/A"
     soil_moisture = first_24[0].get("soil_moisture_0_to_1cm") if first_24 else "N/A"
@@ -406,12 +440,14 @@ def make_report(location: Dict[str, Any], payload: Dict[str, Any], language: str
         f"🌡️ Feels like: {current.get('apparent_temperature', 'N/A')}°C",
         f"💧 Humidity: {current.get('relative_humidity_2m', 'N/A')}%",
         f"🌧️ Rain: {current.get('rain', 'N/A')} mm",
-        f"🌧️ Precipitation: {current.get('precipitation', 'N/A')} mm",
         f"💨 Wind: {current.get('wind_speed_10m', 'N/A')} km/h",
-        f"🧭 Wind direction: {current.get('wind_direction_10m', 'N/A')}°",
         f"☀️ UV Index: {current.get('uv_index', 'N/A')}",
-        f"⏲️ Pressure: {current.get('surface_pressure', 'N/A')} hPa",
         f"🕐 Updated: {current.get('time', 'N/A')}",
+        "",
+        "💡 GENERAL ADVICE & DAILY HELPER:",
+        f"• Umbrella Advice: {recommendations['umbrella_advice']}",
+        f"• Clothes Advice: {recommendations['clothes_drying_advice']}",
+        f"• Rain Chance (Next 12 Hours): {recommendations['rain_probability_next_12h']}",
         "",
         "🌱 AGRICULTURE & SOIL DATA:",
         f"Soil temperature (0-10 cm): {soil_temp}°C",
@@ -420,7 +456,6 @@ def make_report(location: Dict[str, Any], payload: Dict[str, Any], language: str
         "⏰ HOURLY FORECAST (Next 6 Hours Preview):",
     ]
 
-    # Include hourly preview directly in the text response
     for hour in first_24[:6]:
         time_str = hour['time'].split("T")[-1] if "T" in hour['time'] else hour['time']
         lines.append(
@@ -443,9 +478,8 @@ def make_report(location: Dict[str, Any], payload: Dict[str, Any], language: str
         english = english.replace("Location", "Jagah").replace("Condition", "Mausam")
         english = english.replace("Temperature", "Taapman").replace("Humidity", "Nami")
         english = english.replace("Rain", "Baarish").replace("Wind", "Hawa")
+        english = english.replace("GENERAL ADVICE & DAILY HELPER", "ROZMARRA KI SALAH (DAILY HELPER)")
         english = english.replace("AGRICULTURE & SOIL DATA", "KHETI AUR MITTI KI JAANKARI")
-        english = english.replace("Soil temperature", "Mitti ka temperature")
-        english = english.replace("Soil moisture", "Mitti ki nami")
         english = english.replace("HOURLY FORECAST (Next 6 Hours Preview)", "AGLE 6 GHANTO KA MAUSAM")
         english = english.replace("7-DAY FORECAST", "AGLE 7 DINO KA FORECAST")
         return english
@@ -461,17 +495,28 @@ def home() -> Dict[str, str]:
 @app.post("/api/chat")
 async def chat(payload: UserQuery) -> Dict[str, Any]:
     message = payload.message.strip()
-    if not message:
-        return {"status": "failed", "reply": "Please send a location or weather question.", "data": None}
-
     language = detect_language(message)
     location_query = extract_location(message)
+
+    # Agar location missing hai, toh user se location poochho
+    if not location_query:
+        prompt_reply = (
+            "Aap kis shahar (city) ya jagah ka mausam janna chahte hain? Kripya apni location batayein."
+            if language in ["hinglish", "hi"]
+            else "Which city or location would you like the weather update for? Please mention your city."
+        )
+        return {
+            "status": "need_location",
+            "reply": prompt_reply,
+            "data": None,
+        }
+
     location = geocode(location_query)
 
     if not location:
         return {
             "status": "failed",
-            "reply": f"Could not find '{location_query}'. Try a city, district, state, or country name.",
+            "reply": f"Maaf kijiye, mujhe '{location_query}' ki location nahi mili. Kripya shahar ka sahi naam batayein.",
             "data": None,
         }
 
@@ -479,12 +524,13 @@ async def chat(payload: UserQuery) -> Dict[str, Any]:
     if not weather:
         return {
             "status": "failed",
-            "reply": f"Could not fetch live weather data right now. Error Details: {err}",
+            "reply": f"Maaf kijiye, abhi live data fetch nahi ho pa raha hai. Error: {err}",
             "data": None,
         }
 
     hourly_24 = next_24_hours(weather.get("hourly", {}), weather.get("current", {}).get("time"))
     seven_days = forecast_7_days(weather.get("daily", {}))
+    general_advice = generate_general_recommendations(weather.get("current", {}), weather.get("daily", {}), hourly_24)
     report = make_report(location, weather, language)
 
     return {
@@ -493,6 +539,7 @@ async def chat(payload: UserQuery) -> Dict[str, Any]:
         "location": location,
         "data": {
             "current": weather.get("current", {}),
+            "general_advice": general_advice,
             "next_24_hours": hourly_24,
             "seven_day_forecast": seven_days,
             "timezone": weather.get("timezone", "auto"),
