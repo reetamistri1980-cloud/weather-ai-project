@@ -6,12 +6,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-try:
-    from deep_translator import GoogleTranslator
-except ImportError:
-    GoogleTranslator = None
+# ==========================================
+# 🔑 APNI WEATHERAPI.COM KI KEY YAHAN DALEIN
+# ==========================================
+WEATHER_API_KEY = "YOUR_WEATHER_API_KEY_HERE"
 
-app = FastAPI(title="All-India Weather & Waterlogging API")
+app = FastAPI(title="Accurate Weather & Waterlogging API")
 
 app.add_middleware(
     CORSMiddleware,
@@ -26,9 +26,17 @@ class UserQuery(BaseModel):
     message: str
 
 
+# Waterlogging hotspot areas in major Indian cities
 WATERLOGGING_HOTSPOTS = {
-    "delhi": ["minto bridge", "ito", "pul prahladpur", "loni", "dhaula kuan", "najafgarh", "laxmi nagar", "karol bagh", "dwarka", "ashok vihar", "sangam vihar", "connaught place", "cp", "rohini", "chandni chowk"],
-    "mumbai": ["hindmata", "king circle", "kurla", "andheri subway", "dadar", "sion", "bandra", "malad subway"],
+    "delhi": [
+        "minto bridge", "ito", "pul prahladpur", "loni", "dhaula kuan",
+        "najafgarh", "laxmi nagar", "karol bagh", "dwarka", "ashok vihar",
+        "sangam vihar", "connaught place", "cp", "rohini", "chandni chowk"
+    ],
+    "mumbai": [
+        "hindmata", "king circle", "kurla", "andheri subway", "dadar",
+        "sion", "bandra", "malad subway"
+    ],
     "kolkata": ["mg road", "thanthania", "park street", "cr avenue", "behala"],
     "bangalore": ["silk board", "outer ring road", "bellandur", "tin factory"],
     "patna": ["rajendra nagar", "kankerbagh"],
@@ -57,33 +65,18 @@ LANDMARKS = {
     "dwarka": "Dwarka, Delhi, India",
 }
 
-WMO = {
-    0: "Clear sky ☀️", 1: "Mainly clear 🌤️", 2: "Partly cloudy ⛅", 3: "Overcast ☁️",
-    45: "Foggy 🌫️", 48: "Rime fog 🌫️", 51: "Light drizzle 🌦️", 53: "Moderate drizzle 🌦️",
-    55: "Dense drizzle 🌧️", 61: "Slight rain 🌧️", 63: "Moderate rain 🌧️", 65: "Heavy rain 🌧️",
-    80: "Slight rain showers 🌦️", 81: "Moderate rain showers 🌧️", 82: "Violent rain showers ⛈️",
-    95: "Thunderstorm ⛈️", 96: "Thunderstorm with slight hail ⛈️", 99: "Thunderstorm with heavy hail ⛈️",
-}
-
 HINGLISH_WORDS = {
     "kaisa", "kaise", "kesa", "kese", "kya", "batao", "btao", "mausam", "mosam",
     "aaj", "kal", "baarish", "barish", "garmi", "sardi", "fasal", "kheti", "mitti",
     "nami", "taapman", "hawa", "rahega", "rahegi", "hai", "hain", "mein", "me", "ka",
     "ki", "ke", "kab", "kitna", "kitni", "dikhao", "chahiye", "chhatri", "umbrella",
-    "kapde", "waterlogging", "paani", "jam", "block", "water",
+    "kapde", "waterlogging", "paani", "pani", "jam", "block", "water", "jal", "jamav"
 }
 
 
 def norm(text: str) -> str:
     text = text.strip().lower().replace("’", "'")
     return re.sub(r"\s+", " ", text).strip(" ?!.,;:")
-
-
-def detect_language(text: str) -> str:
-    if re.search(r"[\u0900-\u097F]", text):
-        return "hi"
-    words = re.findall(r"[A-Za-z]+", text.lower())
-    return "hinglish" if any(w in HINGLISH_WORDS for w in words) else "en"
 
 
 def is_waterlogging_query(text: str) -> bool:
@@ -95,16 +88,17 @@ def is_waterlogging_query(text: str) -> bool:
 def extract_location(text: str) -> Optional[str]:
     raw = norm(text)
 
-    # 1. Landmark & Hotspot Matching
+    # 1. Check Landmark or Hotspot
     for key, val in LANDMARKS.items():
         if key in raw:
             return val
 
+    # 2. Check State / Major City Alias
     for key, val in INDIA_ALIASES.items():
         if re.search(rf"\b{re.escape(key)}\b", raw, re.I):
             return val
 
-    # 2. Regex Match for Cities/Places
+    # 3. Regex Patterns for city names in sentence
     patterns = [
         r"(?:weather|mausam|mosam|rain|baarish|barish|waterlogging|paani|pani)\s+(?:in|of|for|at|near|ka|ki|ke|mein|me|par)\s+(.+)$",
         r"(?:what is|tell me|show me)\s+(?:the\s+)?(?:weather|forecast)\s+(?:in|of|for|at)\s+(.+)$",
@@ -117,36 +111,11 @@ def extract_location(text: str) -> Optional[str]:
             if cand:
                 return cand
 
-    # 3. Clean word check
+    # 4. Filter stop words
     words = [w for w in raw.split() if w not in HINGLISH_WORDS]
     if words:
         return " ".join(words)
 
-    return None
-
-
-def geocode(location: str) -> Optional[Dict[str, Any]]:
-    key = norm(location)
-    if key in LANDMARKS:
-        search_query = LANDMARKS[key]
-    else:
-        search_query = INDIA_ALIASES.get(key, location)
-
-    url = "https://geocoding-api.open-meteo.com/v1/search"
-    try:
-        res = requests.get(url, params={"name": search_query, "count": 1, "language": "en"}, timeout=5).json()
-        results = res.get("results")
-        if results:
-            item = results[0]
-            parts = [item.get("name"), item.get("admin2"), item.get("admin1"), item.get("country")]
-            unique_parts = [p for p in parts if p and p not in []]
-            return {
-                "name": ", ".join(dict.fromkeys(unique_parts)),
-                "latitude": item["latitude"],
-                "longitude": item["longitude"],
-            }
-    except Exception:
-        pass
     return None
 
 
@@ -169,63 +138,73 @@ def check_waterlogging_risk(location_name: str, rain_mm: float) -> str:
         return "✅ NO WATERLOGGING: Sadke saaf hain aur aaj paani bharne ka koi risk nahi hai."
 
 
-def make_full_weather_report(location: Dict[str, Any], payload: Dict[str, Any]) -> str:
-    current = payload.get("current", {})
-    hourly = payload.get("hourly", {})
-    daily = payload.get("daily", {})
+def fetch_weather_data(location_query: str) -> Optional[Dict[str, Any]]:
+    """WeatherAPI.com se accurate data fetch karta hai"""
+    url = f"http://api.weatherapi.com/v1/forecast.json"
+    params = {
+        "key": WEATHER_API_KEY,
+        "q": location_query,
+        "days": 7,
+        "aqi": "no",
+        "alerts": "yes"
+    }
+    try:
+        res = requests.get(url, params=params, timeout=8)
+        if res.status_code == 200:
+            return res.json()
+    except Exception:
+        pass
+    return None
 
-    code = current.get("weather_code", 0)
-    condition = WMO.get(code, "Clear sky ☀️")
 
-    rain = current.get("rain", 0.0) or 0.0
-    precip_prob = max((hourly.get("precipitation_probability") or [0])[:12], default=0)
+def make_full_weather_report(data: Dict[str, Any]) -> str:
+    loc = data["location"]["name"] + ", " + data["location"]["region"] + ", " + data["location"]["country"]
+    curr = data["current"]
+    forecast_days = data["forecast"]["forecastday"]
 
-    needs_umbrella = rain > 0.1 or precip_prob >= 30
+    condition = curr["condition"]["text"]
+    temp = curr["temp_c"]
+    feels_like = curr["feelslike_c"]
+    humidity = curr["humidity"]
+    rain_mm = curr["precip_mm"]
+    wind_kmh = curr["wind_kph"]
+
+    today_hourly = forecast_days[0]["hour"]
+    precip_prob = max([h["chance_of_rain"] for h in today_hourly[:12]], default=0)
+
+    needs_umbrella = rain_mm > 0.1 or precip_prob >= 30
     umbrella_msg = "☔ YES, UMBRELLA NEEDED! Baarish ke chances hain." if needs_umbrella else "☀️ NO UMBRELLA NEEDED! Mausam saaf hai."
     clothes_msg = "🏠 Kapde andar hi sukhayein." if needs_umbrella else "👕 Bahar kapde sukhane ke liye achha din hai."
 
-    soil_temp = (hourly.get("soil_temperature_0_to_10cm") or ["N/A"])[0]
-    soil_moisture = (hourly.get("soil_moisture_0_to_1cm") or ["N/A"])[0]
-
     lines = [
-        f"📍 Jagah: {location['name']}",
+        f"📍 Jagah: {loc}",
         f"🌤️ Mausam: {condition}",
-        f"🌡️ Taapman: {current.get('temperature_2m', 'N/A')}°C",
-        f"🌡️ Feels like: {current.get('apparent_temperature', 'N/A')}°C",
-        f"💧 Nami (Humidity): {current.get('relative_humidity_2m', 'N/A')}%",
-        f"🌧️ Baarish: {rain} mm",
-        f"💨 Hawa: {current.get('wind_speed_10m', 'N/A')} km/h",
+        f"🌡️ Taapman: {temp}°C",
+        f"🌡️ Feels like: {feels_like}°C",
+        f"💧 Nami (Humidity): {humidity}%",
+        f"🌧️ Live Baarish: {rain_mm} mm",
+        f"💨 Hawa: {wind_kmh} km/h",
         "",
         "💡 ROZMARRA KI SALAH (DAILY HELPER):",
         f"• Umbrella Advice: {umbrella_msg}",
         f"• Clothes Advice: {clothes_msg}",
         f"• Agle 12 ghante mein baarish ka chance: {precip_prob}%",
         "",
-        "🌱 KHETI AUR MITTI KI JAANKARI:",
-        f"Mitti ka taapman (0-10 cm): {soil_temp}°C",
-        f"Mitti ki nami (0-1 cm): {soil_moisture} m³/m³",
-        "",
         "⏰ AGLE 6 GHANTO KA MAUSAM:",
     ]
 
-    times = hourly.get("time", [])[:6]
-    temps = hourly.get("temperature_2m", [])[:6]
-    probs = hourly.get("precipitation_probability", [])[:6]
-    codes = hourly.get("weather_code", [])[:6]
-
-    for t, temp, prob, c in zip(times, temps, probs, codes):
-        t_str = t.split("T")[-1] if "T" in t else t
-        lines.append(f"  • {t_str} -> {temp}°C | Baarish Chance: {prob}% | {WMO.get(c, 'Clear')}")
+    for h in today_hourly[:6]:
+        time_str = h["time"].split(" ")[-1]
+        lines.append(f"  • {time_str} -> {h['temp_c']}°C | Baarish Chance: {h['chance_of_rain']}% | {h['condition']['text']}")
 
     lines.extend(["", "🔮 AGLE 7 DINO KA FORECAST:"])
-    d_dates = daily.get("time", [])[:7]
-    d_max = daily.get("temperature_2m_max", [])[:7]
-    d_min = daily.get("temperature_2m_min", [])[:7]
-    d_codes = daily.get("weather_code", [])[:7]
-    d_probs = daily.get("precipitation_probability_max", [])[:7]
-
-    for date, mx, mn, c, pr in zip(d_dates, d_max, d_min, d_codes, d_probs):
-        lines.append(f"📅 {date} | Max {mx}°C | Min {mn}°C | {WMO.get(c, 'Clear')} | Baarish Chance: {pr}%")
+    for day in forecast_days:
+        date = day["date"]
+        max_t = day["day"]["maxtemp_c"]
+        min_t = day["day"]["mintemp_c"]
+        cond = day["day"]["condition"]["text"]
+        prob = day["day"]["daily_chance_of_rain"]
+        lines.append(f"📅 {date} | Max {max_t}°C | Min {min_t}°C | {cond} | Baarish Chance: {prob}%")
 
     return "\n".join(lines)
 
@@ -241,39 +220,43 @@ async def chat(payload: UserQuery) -> Dict[str, Any]:
             "reply": "Aap kis city ya location ka status janna chahte hain? Kripya location ka naam batayein.",
         }
 
-    geo = geocode(location_query)
-    if not geo:
-        return {"status": "failed", "reply": f"Maaf kijiye, mujhe '{location_query}' ki location nahi mili."}
+    weather_data = fetch_weather_data(location_query)
+    if not weather_data:
+        return {
+            "status": "failed",
+            "reply": f"Maaf kijiye, mujhe '{location_query}' ki location ya data nahi mila. Kripya sahi spelling check karein.",
+        }
 
-    # Weather API Call
-    url = f"https://api.open-meteo.com/v1/forecast?latitude={geo['latitude']}&longitude={geo['longitude']}&current=temperature_2m,relative_humidity_2m,apparent_temperature,rain,weather_code,wind_speed_10m&hourly=temperature_2m,precipitation_probability,weather_code,soil_temperature_0_to_10cm,soil_moisture_0_to_1cm&daily=temperature_2m_max,temperature_2m_min,weather_code,precipitation_probability_max&timezone=auto"
+    loc_name = weather_data["location"]["name"] + ", " + weather_data["location"]["region"]
+    current_rain = weather_data["current"]["precip_mm"]
 
-    try:
-        res = requests.get(url, timeout=8).json()
-    except Exception:
-        return {"status": "failed", "reply": "Data fetch karne mein dikkat aayi."}
-
-    current_rain = res.get("current", {}).get("rain", 0.0) or 0.0
-
-    # 1. Agar question SIRF Waterlogging se juda hai
+    # 1. Agar User ne SIRF Waterlogging / Paani bharne ke baare mein poocha hai
     if is_waterlogging_query(message):
-        waterlog_status = check_waterlogging_risk(geo["name"], current_rain)
+        waterlog_status = check_waterlogging_risk(loc_name, current_rain)
         report = (
-            f"📍 Jagah: {geo['name']}\n"
+            f"📍 Jagah: {loc_name}\n"
             f"📅 Taareekh: Today (Aaj)\n"
-            f"🌧️ Aaj ki Baarish: {current_rain} mm\n\n"
+            f"🌧️ Aaj ki Live Baarish: {current_rain} mm\n\n"
             f"🌊 WATERLOGGING STATUS:\n"
             f"{waterlog_status}"
         )
         return {
             "status": "success",
             "reply": report,
-            "data": {"waterlogging": waterlog_status, "current_rain_mm": current_rain},
+            "data": {
+                "location": loc_name,
+                "current_rain_mm": current_rain,
+                "waterlogging": waterlog_status
+            },
         }
 
-    # 2. Agar Mausam (Weather) ka poochha hai toh saare purane follow-ups ke saath answer
-    full_report = make_full_weather_report(geo, res)
-    return {"status": "success", "reply": full_report, "data": res}
+    # 2. Agar Mausam (Weather) poocha hai toh Complete Follow-ups ke saath Output
+    full_report = make_full_weather_report(weather_data)
+    return {
+        "status": "success",
+        "reply": full_report,
+        "data": weather_data
+    }
 
 
 if __name__ == "__main__":
